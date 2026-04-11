@@ -63,8 +63,8 @@ User inputs a social media claim
 | Step 2 | Web search integration (Tavily API) | ✅ Done |
 | Step 3 | Semantic search (sentence-transformers + FAISS) | ✅ Done |
 | Step 3.5 | Query extraction for long/complex claims | ✅ Done |
-| Step 4 | Fine-tuned BERT classifier (gatekeeper) | 🔄 Pending (Kaggle) |
-| Step 5 | Final integration + UI | 🔄 Pending |
+| Step 4 | BERT classifier fine-tuned (69% accuracy, F1: 0.69) | ✅ Done |
+| Step 5 | Web UI (in progress) | 🔄 Pending |
 
 ---
 
