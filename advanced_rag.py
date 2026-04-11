@@ -8,8 +8,33 @@ TAVILY_API_KEY = "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"
 
 # Load embedding model once at startup (not every query)
 print("Loading embedding model...")
-embedder = SentenceTransformer('all-MiniLM-L6-v2')  # small, fast, 90MB
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
 print("Ready!")
+
+def extract_search_query(claim: str) -> str:
+    """Ask Gemma to extract a clean short search query from the claim"""
+    
+    payload = {
+        "model": "gemma",
+        "messages": [
+            {
+                "role": "user",
+                "content": f"""Extract the single most important factual claim 
+from the text below and convert it into a short web search query of 
+maximum 8 words. Return ONLY the search query, nothing else.
+
+Text: {claim}"""
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 30  # force short output
+    }
+    
+    response = requests.post(LM_STUDIO_URL, json=payload)
+    query = response.json()["choices"][0]["message"]["content"].strip()
+    print(f"   Search query: '{query}'")
+    return query
+
 
 def search_web(claim: str) -> list:
     """Search web for evidence about the claim using Tavily"""
@@ -27,7 +52,6 @@ def search_web(claim: str) -> list:
     response = requests.post(url, json=payload)
     data = response.json()
     
-    # Return as list of chunks instead of one big string
     chunks = []
     for result in data.get("results", []):
         chunks.append({
@@ -45,23 +69,19 @@ def get_relevant_chunks(claim: str, chunks: list, top_k: int = 3) -> list:
     if not chunks:
         return []
     
-    # Convert claim and chunks to vectors
     claim_vector = embedder.encode([claim])
     chunk_texts = [c["content"] for c in chunks]
     chunk_vectors = embedder.encode(chunk_texts)
     
-    # Build FAISS index
-    dimension = chunk_vectors.shape[1]  # vector size (384 for MiniLM)
+    dimension = chunk_vectors.shape[1]
     index = faiss.IndexFlatL2(dimension)
     index.add(np.array(chunk_vectors, dtype=np.float32))
     
-    # Search for top_k most relevant chunks
     distances, indices = index.search(
-        np.array(claim_vector, dtype=np.float32), 
-        min(top_k, len(chunks))  # don't ask for more than we have
+        np.array(claim_vector, dtype=np.float32),
+        min(top_k, len(chunks))
     )
     
-    # Return only the most relevant chunks
     relevant = [chunks[i] for i in indices[0]]
     return relevant
 
@@ -79,22 +99,26 @@ def format_evidence(chunks: list) -> str:
 
 
 def check_fact(claim: str) -> str:
-    """Full pipeline: search → semantic filter → LLM verdict"""
+    """Full pipeline: extract query → search → semantic filter → LLM verdict"""
     
-    # Step 1 — get evidence from web
+    # Step 1 — extract clean search query from claim
+    print("✂️  Extracting search query...")
+    search_query = extract_search_query(claim)
+    
+    # Step 2 — search web with clean query
     print("🔍 Searching web for evidence...")
-    all_chunks = search_web(claim)
+    all_chunks = search_web(search_query)  # ← query not raw claim
     print(f"   Found {len(all_chunks)} sources")
     
-    # Step 2 — semantic search, keep only most relevant chunks
+    # Step 3 — semantic search against ORIGINAL claim (not query)
     print("🧠 Finding most relevant chunks...")
     relevant_chunks = get_relevant_chunks(claim, all_chunks, top_k=3)
     print(f"   Selected {len(relevant_chunks)} most relevant sources")
     
-    # Step 3 — format evidence
+    # Step 4 — format evidence
     evidence = format_evidence(relevant_chunks)
     
-    # Step 4 — send to Gemma
+    # Step 5 — send to Gemma
     print("🤖 Analysing with Gemma...")
     prompt = f"""You are a strict fact-checking assistant.
 You must check the claim word-for-word against the evidence.
