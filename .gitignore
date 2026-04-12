@@ -1,0 +1,11 @@
+# Model weights — hosted on HuggingFace
+fact_checker_bert/model.safetensors
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.env
+
+# VS Code
+.vscode/
