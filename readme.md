@@ -89,11 +89,19 @@ User inputs a social media claim
 - [LM Studio](https://lmstudio.ai/) installed with **Gemma 2B or Gemma 3 4B** downloaded
 - A free [Tavily API key](https://tavily.com) (1,000 free searches/month)
 
+## Model Weights
+
+The fine-tuned BERT classifier is hosted on HuggingFace:
+👉 [https://huggingface.co/DarkStrike/fact-checker-bert](https://huggingface.co/DarkStrike/fact-checker-bert)
+
+It downloads automatically when you run the project.
+No manual download needed.
+
 ### Installation
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/fact-checker.git
+git clone [https://github.com/Darkstrike03/fact-checker.git](https://github.com/Darkstrike03/Fact-checker/)
 cd fact-checker
 
 # Install dependencies
