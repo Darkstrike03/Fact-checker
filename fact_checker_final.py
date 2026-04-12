@@ -6,7 +6,7 @@ import torch
 from transformers import BertTokenizer, BertForSequenceClassification
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-TAVILY_API_KEY = "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"
+TAVILY_API_KEY = "input-travilty-key"
 BERT_MODEL_PATH = "https://huggingface.co/DarkStrike/fact-checker-bert"  # folder you just downloaded
 
 # --- Load models at startup ---
