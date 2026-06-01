@@ -1,7 +1,7 @@
 import requests
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-TAVILY_API_KEY = "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"
+TAVILY_API_KEY = "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"
 
 def search_web(claim: str) -> str:
     """Search web for evidence about the claim using Tavily"""
