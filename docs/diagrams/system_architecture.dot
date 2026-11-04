@@ -1,0 +1,34 @@
+digraph system_architecture {
+  graph [rankdir=TB, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.45"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=11,
+        fillcolor="#eef4ff", color="#3b5bdb", margin="0.18,0.10"];
+  edge [fontname="Arial", fontsize=9, color="#555555"];
+
+  app [label="app.py\nGradio UI", fillcolor="#fff4e6", color="#d9480f"];
+  pipeline [label="pipeline.py\nlive orchestration", fillcolor="#fff0f6", color="#c2255c"];
+  retrieval [label="retrieval.py\nPlaywright search + page fetch"];
+  evidence [label="evidence.py\nsentences + SBERT/FAISS"];
+  prompts [label="evaluation/prompts.py\nstrict label prompts"];
+  llm [label="llm_client.py\nLM Studio OpenAI API"];
+  eval [label="evaluation/\nCOVID-Fact harness"];
+  metrics [label="evaluation/metrics.py\nmetrics + bootstrap + McNemar"];
+  config [label="config.py\npaths, models, settings", fillcolor="#f8f9fa"];
+  resources [label="resources/\npaper + TSV splits", fillcolor="#f8f9fa"];
+  cache [label="cache/\nPlaywright cache", fillcolor="#f8f9fa"];
+
+  app -> pipeline;
+  pipeline -> retrieval;
+  pipeline -> evidence;
+  pipeline -> prompts;
+  pipeline -> llm;
+  retrieval -> cache;
+  eval -> retrieval;
+  eval -> evidence;
+  eval -> prompts;
+  eval -> llm;
+  eval -> metrics;
+  eval -> resources;
+  config -> app [style=dotted];
+  config -> pipeline [style=dotted];
+  config -> eval [style=dotted];
+}

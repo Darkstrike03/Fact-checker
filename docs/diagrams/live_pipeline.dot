@@ -1,0 +1,24 @@
+digraph live_pipeline {
+  graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.35", ranksep="0.55"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=11,
+        fillcolor="#eef4ff", color="#3b5bdb", margin="0.18,0.10"];
+  edge [fontname="Arial", fontsize=9, color="#555555"];
+
+  claim [label="Claim", fillcolor="#fff4e6", color="#d9480f"];
+  search [label="Playwright search\nBrave Search HTML", fillcolor="#e7f5ff"];
+  providers [label="Fallbacks\nGoogle News RSS / Wikipedia", fillcolor="#f8f9fa"];
+  fetch [label="Playwright page fetch\ntrafilatura extraction"];
+  sentences [label="Sentence splitter\ndeduplicate + filter"];
+  rank [label="SBERT embeddings\nFAISS cosine top-k"];
+  prompt [label="Evidence-grounded prompt\nLABEL + REASON format"];
+  llm [label="LM Studio model\nLFM2.5 1.2B or Qwen3 0.6B"];
+  parser [label="Strict parser\nSUPPORTED / REFUTED", fillcolor="#e6fcf5", color="#0ca678"];
+  result [label="UI result + sources", fillcolor="#fff0f6", color="#c2255c"];
+
+  claim -> search;
+  search -> providers [style=dashed, label="if empty"];
+  search -> fetch;
+  providers -> fetch [style=dashed];
+  fetch -> sentences -> rank -> prompt -> llm -> parser -> result;
+  rank -> result [style=dotted, label="selected evidence"];
+}

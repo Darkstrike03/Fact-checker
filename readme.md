@@ -1,294 +1,197 @@
-# 🔍 Automated Fact Checker — Social Media Claims
+# COVID-Fact Evidence Checker
+
 **4th Year Project | Dept. of Computer Science & Engineering | RCCIIT**
+
 Faculty Supervisor: Dr. Anup Kumar Kolya
 
----
+A retrieval-grounded fact-checking system for COVID-19 claims. The system uses local Playwright-based web retrieval, SBERT + FAISS evidence ranking, and two small quantized models served by LM Studio. Verdicts use the COVID-Fact dataset labels **SUPPORTED** and **REFUTED** only.
 
-## 📌 Project Overview
+## What it does
 
-This project is an end-to-end automated fact-checking system for social media claims. It uses a **Retrieval-Augmented Generation (RAG)** pipeline to verify claims by fetching real-time web evidence and reasoning over it using a local Large Language Model (LLM).
+- Searches the web with Playwright (Brave Search primary, Google News RSS and Wikipedia fallbacks).
+- Fetches and extracts page text with `trafilatura`.
+- Ranks evidence sentences with `all-MiniLM-L6-v2` and FAISS cosine similarity.
+- Sends the same evidence to two LM Studio models and asks for a strict binary label.
+- Shows the label, short reason, selected evidence with URLs, optional BERT hint, and run metadata.
+- Returns **No verdict** when no usable evidence is found instead of inventing a label.
+- Provides a reproducible evaluation harness for the official COVID-Fact splits.
 
-The system is designed to go beyond simple LLM fact-checking (which relies on training memory and can hallucinate) by grounding every verdict in **live retrieved evidence from the web**.
+## Results
 
----
+Full test split, gold evidence, 401 examples per configuration:
 
-## 🧠 Architecture
+| Model | Prompt | Accuracy | Macro F1 | Invalid |
+|---|---|---:|---:|---:|
+| LFM2.5 1.2B | few-shot | 64.3% | 0.6301 | 0 |
+| Qwen3 0.6B | zero-shot | 54.6% | 0.5413 | 0 |
+| LFM2.5 1.2B | zero-shot | 34.7% | 0.2812 | 0 |
+| Qwen3 0.6B | few-shot | 33.9% | 0.2765 | 0 |
 
-The full planned pipeline has 4 layers:
+On the 60-claim retrieval sample (19 SUPPORTED / 41 REFUTED), LFM2.5 few-shot scored **71.7% / 0.6679 macro F1** and Qwen3 zero-shot scored **58.3% / 0.5823**. That run is mostly search-snippet evidence (8 Brave page-text results, 47 Google News snippets, 5 failures), so it is a pilot result rather than a full page-fetch benchmark.
 
-```
-User inputs a social media claim
-            ↓
-┌─────────────────────────────┐
-│  Layer 1: Classifier        │  ← Fine-tuned BERT (Step 4, Kaggle)
-│  Is this even a claim?      │
-│  Categories:                │
-│  - Not a claim (skip)       │
-│  - Racist / harmful         │
-│  - Misleading               │
-│  - Needs verification       │
-└─────────────────────────────┘
-            ↓ (only if verifiable)
-┌─────────────────────────────┐
-│  Layer 2: Query Extraction  │  ← Gemma extracts clean search query
-│  Long claim → short query   │
-└─────────────────────────────┘
-            ↓
-┌─────────────────────────────┐
-│  Layer 3: Web Search (RAG)  │  ← Tavily API fetches real evidence
-│  Returns top 5 sources      │
-└─────────────────────────────┘
-            ↓
-┌─────────────────────────────┐
-│  Layer 4: Semantic Search   │  ← sentence-transformers + FAISS
-│  Picks top 3 relevant chunks│
-│  from retrieved sources     │
-└─────────────────────────────┘
-            ↓
-┌─────────────────────────────┐
-│  Layer 5: LLM Reasoning     │  ← Gemma 2B / Gemma 3 4B via LM Studio
-│  claim + evidence → verdict │
-└─────────────────────────────┘
-            ↓
-    Verdict + Reason + Confidence + Sources
-```
+For comparison, the COVID-Fact paper reports 83.5% accuracy / 82.0 F1 for RoBERTa-large with gold evidence and 67.5% / 40.0 for a claim-only classifier. The small local models are much less accurate than the fine-tuned RoBERTa, but LFM2.5 few-shot has substantially higher macro F1 than the paper's claim-only baseline. See [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/REPORT.md](docs/REPORT.md) for details and limitations.
 
----
+## Project structure
 
-## ✅ Progress Tracker
-
-| Step | Description | Status |
-|------|-------------|--------|
-| Step 1 | Local LLM setup (Gemma via LM Studio) | ✅ Done |
-| Step 2 | Web search integration (Tavily API) | ✅ Done |
-| Step 3 | Semantic search (sentence-transformers + FAISS) | ✅ Done |
-| Step 3.5 | Query extraction for long/complex claims | ✅ Done |
-| Step 4 | BERT classifier fine-tuned (69% accuracy, F1: 0.69) | ✅ Done |
-| Step 5 | Web UI (in progress) | 🔄 Pending |
-
----
-
-## 🛠️ Tech Stack
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Core LLM | Gemma 2B / Gemma 3 4B (via LM Studio) | Reasoning and verdict generation |
-| Web Search | Tavily API | Real-time evidence retrieval |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | Converting text to vectors |
-| Vector Search | FAISS (`faiss-cpu`) | Finding most relevant evidence chunks |
-| Classifier | BERT (fine-tuning planned) | Claim gating and pre-classification |
-| Language | Python 3.x | Everything |
-
----
-
-## 💻 Local Setup
-
-### Prerequisites
-
-- Python 3.8+
-- [LM Studio](https://lmstudio.ai/) installed with **Gemma 2B or Gemma 3 4B** downloaded
-- A free [Tavily API key](https://tavily.com) (1,000 free searches/month)
-
-## Model Weights
-
-The fine-tuned BERT classifier is hosted on HuggingFace:
-👉 [https://huggingface.co/DarkStrike/fact-checker-bert](https://huggingface.co/DarkStrike/fact-checker-bert)
-
-It downloads automatically when you run the project.
-No manual download needed.
-
-### Installation
-
-```bash
-# Clone the repo
-git clone [https://github.com/Darkstrike03/fact-checker.git](https://github.com/Darkstrike03/Fact-checker/)
-cd fact-checker
-
-# Install dependencies
-pip install requests sentence-transformers faiss-cpu numpy
+```text
+FACT_CHECKER/
+├── app.py                         # Gradio UI
+├── pipeline.py                    # Live orchestration
+├── retrieval.py                   # Playwright search + page fetch
+├── evidence.py                    # Sentence splitting + SBERT/FAISS ranking
+├── llm_client.py                  # LM Studio client + strict label parser
+├── config.py                      # Paths, models, environment settings
+├── basic_rag.py                   # Stage 1 CLI demo
+├── advanced_rag.py                # Two-model comparison CLI
+├── fact_checker_final.py          # CLI demo with optional BERT screen
+├── evaluation/
+│   ├── evaluate_covidfact.py      # COVID-Fact runner
+│   ├── build_retrieval_cache.py   # Playwright cache builder
+│   ├── prompts.py                 # Zero-shot / few-shot / UI prompts
+│   └── metrics.py                 # Metrics + bootstrap + McNemar
+├── tests/                         # Unit tests
+├── docs/                          # Report, architecture, diagrams, future work
+├── resources/                     # COVID-Fact paper + official TSV splits
+└── fact_checker_bert/             # Optional local BERT weights
 ```
 
-### LM Studio Setup
+## Quick start
 
-1. Open LM Studio
-2. Download **Gemma 2B** or **Gemma 3 4B** model
-3. Go to the **Local Server** tab (the `<->` icon)
-4. Load the model and click **Start Server**
-5. Server runs at `http://localhost:1234` — keep it running
+### 1. Python environment
 
-### API Key Setup
-
-Open `basic_rag.py` and replace:
-```python
-TAVILY_API_KEY = "your-tavily-api-key-here"
-```
-with your actual Tavily key from the dashboard.
-
-### Run
-
-```bash
-python basic_rag.py
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
----
+Playwright uses the installed Microsoft Edge browser by default. If Edge is unavailable, install Chromium:
 
-## 📁 File Structure
-
-```
-fact-checker/
-│
-├── basic_rag.py          # Main pipeline (Steps 1-3)
-├── README.md             # This file
-│
-├── classifier/           # Step 4 — BERT fine-tuning (Kaggle)
-│   ├── train.py          # Fine-tuning script (coming soon)
-│   └── model/            # Saved model weights (coming soon)
-│
-└── datasets/             # Training data for classifier
-    └── (coming soon)
+```powershell
+.\.venv\Scripts\playwright.exe install chromium
 ```
 
----
+### 2. LM Studio
 
-## 🔬 How It Works — Step by Step
+1. Install LM Studio.
+2. Download/load `liquid/lfm2.5-1.2b` and `qwen3-0.6b`.
+3. Start the local server on `http://localhost:1234`.
+4. Keep LM Studio running while using the app.
 
-### Step 1 — Query Extraction
-For long or complex claims, Gemma first extracts a clean 6-8 word search query. This prevents Tavily from returning 0 results on dense claims.
+Both model ids are configurable in `.env`:
 
-```
-Input:  "The Haber-Bosch process which won Fritz Haber the 1918 Nobel Prize..."
-Output: "Haber Bosch process Nobel Prize ammonia synthesis"
-```
-
-### Step 2 — Web Search (Tavily)
-The clean query is sent to Tavily which returns top 5 real web sources with titles, URLs, and content snippets.
-
-### Step 3 — Semantic Search (FAISS)
-The claim and all retrieved chunks are converted to vectors using `all-MiniLM-L6-v2`. FAISS finds the top 3 most semantically relevant chunks. This filters noise and keeps the LLM context focused.
-
-### Step 4 — LLM Verdict (Gemma)
-The claim + top 3 evidence chunks are sent to Gemma with a strict prompt. The model must base its verdict **only on the provided evidence**, not its training memory.
-
-### Output Format
-```
-- Verdict:    True / False / Misleading / Unverifiable
-- Reason:     2-3 sentences based strictly on evidence
-- Confidence: High / Medium / Low
-- Sources:    List of source titles used
+```text
+DEFAULT_MODEL=liquid/lfm2.5-1.2b
+SECOND_MODEL=qwen3-0.6b
+REASONING_EFFORT=none
 ```
 
-### Verdict Definitions
-| Verdict | Meaning |
-|---------|---------|
-| True | Claim is fully accurate with no missing context |
-| False | Claim is factually wrong |
-| Misleading | Claim has partial truth but omits key details or exaggerates |
-| Unverifiable | Evidence is insufficient to judge |
+`REASONING_EFFORT=none` is important for Qwen3; otherwise it can spend the whole completion budget on hidden reasoning tokens and return an empty answer.
 
----
+### 3. Run the UI
 
-## 🧪 Test Cases & Results
+```powershell
+.\.venv\Scripts\python.exe app.py
+```
 
-| Claim | Expected | Result | Notes |
-|-------|----------|--------|-------|
-| "Earth is flat" | False | ✅ False | High confidence, scientific sources |
-| "Virat Kohli resigned from cricket" | Misleading | ✅ Misleading | Only retired from Test cricket |
-| "Mamata Banerjee is dead" | False | ✅ False | Web sources confirm she is alive |
-| Long Haber-Bosch claim | Misleading | ✅ Misleading | Query extraction fixed 0-source issue |
+Open `http://127.0.0.1:7860`. For phone access on the same Wi-Fi, use the LAN address printed in the console. Public sharing is disabled by default; set `GRADIO_SHARE=True` only when needed.
 
----
+### 4. Run the CLI demos
 
-## ⚠️ Known Issues & Fixes Applied
+```powershell
+.\.venv\Scripts\python.exe basic_rag.py
+.\.venv\Scripts\python.exe advanced_rag.py
+.\.venv\Scripts\python.exe fact_checker_final.py
+```
 
-### Issue 1 — Long claims returning 0 sources
-**Problem:** Tavily couldn't parse very long, complex claims as search queries.
-**Fix:** Added a query extraction step where Gemma first converts the claim into a short search query before hitting Tavily.
+### 5. Test retrieval directly
 
-### Issue 2 — Partial truths being marked as True
-**Problem:** "Virat Kohli resigned from cricket" was marked True (he only retired from Test cricket).
-**Fix:** Added explicit verdict definitions and a strict warning in the prompt forcing the model to treat partial truths as Misleading.
+```powershell
+.\.venv\Scripts\python.exe -m retrieval "COVID-19 vaccines reduce hospitalisation" --max-pages 2 --no-cache
+```
 
-### Issue 3 — RAM constraints on 8GB laptop
-**Problem:** Gemma + sentence-transformers together are heavy on low-RAM machines.
-**Fix:** Load embedding model once at startup (not per query). Close all browser tabs and background apps when running.
+## Evaluation
 
----
+The dataset files are in `resources/COVID_FACT_DATASET/`:
 
-## 🗺️ Roadmap
+- `train.tsv`: 3,263 rows
+- `dev.tsv`: 419 rows
+- `test.tsv`: 401 rows
 
-### Current Phase (Local Pipeline)
-- [x] LLM working locally via LM Studio
-- [x] Tavily web search integration
-- [x] FAISS semantic search
-- [x] Query extraction for complex claims
-- [x] Strict prompting for partial truth detection
+Label mapping:
 
-### Next Phase (Kaggle — GPU Required)
-- [ ] Fine-tune BERT classifier on LIAR / ClaimBuster dataset
-- [ ] Integrate classifier as gatekeeper before LLM
-- [ ] Classifier categories: Not a claim / Harmful / Misleading / Needs verification
+| Dataset value | Output label |
+|---|---|
+| `entailment` | `SUPPORTED` |
+| `not_entailment` | `REFUTED` |
 
-### Final Phase
-- [ ] Connect all components into single pipeline
-- [ ] Simple web UI (Streamlit or Gradio)
-- [ ] Evaluation metrics (accuracy, F1 score on test set)
-- [ ] Project report and documentation
+Run the full test gold evaluation:
 
----
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.evaluate_covidfact `
+  --split test --mode gold --prompt both `
+  --model liquid/lfm2.5-1.2b --model qwen3-0.6b
+```
 
-## 📚 Datasets for Classifier (Step 4)
+Rebuild the summary from existing raw JSONL files:
 
-| Dataset | Size | Use |
-|---------|------|-----|
-| [LIAR](https://huggingface.co/datasets/liar) | 12.8k claims | Multi-class claim labeling |
-| [ClaimBuster](https://idir.uta.edu/claimbuster/) | ~23k sentences | Detects if something is even a claim |
-| [FakeNewsNet](https://github.com/KaiDMML/FakeNewsNet) | Large | Social media specific fake news |
-| [FEVER](https://fever.ai/) | 185k claims | Fact verification focused |
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.evaluate_covidfact --summary-only
+```
 
-**Recommended starting point:** LIAR dataset + ClaimBuster combined for the gatekeeper classifier.
+Build and use a 60-example retrieval sample:
 
----
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.build_retrieval_cache `
+  --split test --sample 60 --sample-seed 42 --max-pages 2
 
-## 📖 Key Concepts
+.\.venv\Scripts\python.exe -m evaluation.evaluate_covidfact `
+  --split test --sample 60 --sample-seed 42 --mode retrieved `
+  --prompt few_shot --model liquid/lfm2.5-1.2b
 
-**RAG (Retrieval-Augmented Generation):** Instead of relying on the LLM's training memory, RAG fetches real external evidence first and forces the model to reason over that evidence. This dramatically reduces hallucination.
+.\.venv\Scripts\python.exe -m evaluation.evaluate_covidfact `
+  --split test --sample 60 --sample-seed 42 --mode retrieved `
+  --prompt zero_shot --model qwen3-0.6b
+```
 
-**Semantic Search:** Text is converted to numerical vectors (embeddings) that capture meaning. FAISS finds vectors most similar to the query vector — meaning-based search, not keyword matching.
+Evaluation details, per-class metrics, confidence intervals, and the McNemar comparison are in [docs/EVALUATION.md](docs/EVALUATION.md).
 
-**Embedding Model:** `all-MiniLM-L6-v2` is a small (~90MB) pre-trained model that converts text to 384-dimensional vectors. No training needed — just use it as a tool.
+## Tests
 
-**Fine-tuning:** Taking a pre-trained model (BERT) and training it further on a specific task/dataset. The classifier will be fine-tuned on fact-checking datasets so it specialises in claim classification.
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
 
----
+The tests cover strict label parsing, dataset integrity, metric calculations, and evidence utility functions.
 
-## 🖥️ Hardware Notes
+## Documentation
 
-- **Development machine:** Windows laptop, 8GB RAM, no GPU
-- **LM Studio + Gemma 2B:** ~3-4GB RAM
-- **sentence-transformers:** ~500MB RAM
-- **FAISS:** Negligible
-- **Fine-tuning (Step 4):** Requires GPU → use Kaggle (30 hrs free GPU/week)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Evaluation methodology and results](docs/EVALUATION.md)
+- [Retrieval design](docs/RETRIEVAL.md)
+- [Full project report draft](docs/REPORT.md)
+- [Future work and hosted frontend plan](docs/FUTURE_WORK.md)
+- Diagrams: [live pipeline](docs/diagrams/live_pipeline.png), [evaluation pipeline](docs/diagrams/evaluation_pipeline.png), [system architecture](docs/diagrams/system_architecture.png)
 
----
+## Limitations
 
-## 📄 Project Proposal Reference
+- Full retrieval evaluation is a 60-example stratified sample in this fast-path run; the gold evaluation is full 401-example.
+- Live search results are time-sensitive and depend on search-engine behavior.
+- Small quantized models are highly prompt-sensitive; LFM benefits from few-shot examples while Qwen is hurt by the same examples.
+- No human evaluation of reason/citation faithfulness was performed.
+- The optional BERT screen is a hint only; its local weights do not expose explicit `id2label` metadata.
 
-**Title:** Fact Checking on Social Media Claims
-**Faculty:** Dr. Anup Kumar Kolya, Dept. of CSE, RCCIIT
-**Proposed Area:** End-to-end automated fact-checking framework using deep learning and RAG frameworks for social media texts.
-**Prerequisites:** Basic concepts of LLMs, prompting techniques, deep learning.
+## Dataset and citation
 
----
+Arkadiy Saakyan, Tuhin Chakrabarty, and Smaranda Muresan. 2021.
+COVID-Fact: Fact Extraction and Verification of Real-World Claims on COVID-19 Pandemic.
+ACL-IJCNLP 2021, pages 2116–2129.
 
-## 🔗 References & Tools
+- Paper: https://aclanthology.org/2021.acl-long.165/
+- Official code/data: https://github.com/asaakyan/covidfact
 
-- [LM Studio](https://lmstudio.ai/) — Local LLM server
-- [Tavily](https://tavily.com) — AI-native search API
-- [sentence-transformers](https://www.sbert.net/) — Embedding models
-- [FAISS](https://github.com/facebookresearch/faiss) — Vector similarity search
-- [Hugging Face](https://huggingface.co/) — BERT models and datasets
-- [Kaggle](https://www.kaggle.com/) — Free GPU for fine-tuning
+The paper PDF and official TSV splits are included in `resources/`. See `resources/README.md` for the label mapping and citation.
 
----
+## Next deliverable
 
-*Last updated: April 2026 | Steps 1-3 complete*
+The planned next step is a hosted static frontend with the laptop as the backend: a small FastAPI service around `pipeline.py`, exposed through Cloudflare Tunnel or ngrok, with LM Studio running locally. See [docs/FUTURE_WORK.md](docs/FUTURE_WORK.md) for the API sketch, security checklist, and deployment plan.

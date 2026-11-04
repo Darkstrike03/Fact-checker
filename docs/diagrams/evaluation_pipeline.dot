@@ -1,0 +1,24 @@
+digraph evaluation_pipeline {
+  graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.35", ranksep="0.55"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=11,
+        fillcolor="#f3f0ff", color="#6741d9", margin="0.18,0.10"];
+  edge [fontname="Arial", fontsize=9, color="#555555"];
+
+  splits [label="Official COVID-Fact splits\ntrain / dev / test", fillcolor="#fff4e6", color="#d9480f"];
+  settings [label="Evaluation grid\nmodel x prompt x evidence mode"];
+  gold [label="Gold evidence\nsentence1"];
+  retrieved [label="Retrieved evidence\nPlaywright cache + FAISS top-5"];
+  claim_only [label="Claim-only baseline\nno evidence"];
+  runner [label="Incremental JSONL runner\nresume + strict retry"];
+  metrics [label="Metrics\naccuracy, macro F1, per-class P/R/F1,\nbootstrap CI, McNemar", fillcolor="#e6fcf5", color="#0ca678"];
+  report [label="Results tables + figures\nvs published paper numbers", fillcolor="#fff0f6", color="#c2255c"];
+
+  splits -> settings;
+  settings -> gold;
+  settings -> retrieved;
+  settings -> claim_only;
+  gold -> runner;
+  retrieved -> runner;
+  claim_only -> runner;
+  runner -> metrics -> report;
+}
