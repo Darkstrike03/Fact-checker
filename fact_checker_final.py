@@ -1,13 +1,29 @@
+import os
+from pathlib import Path
+
 import requests
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import faiss
 import torch
 from transformers import BertTokenizer, BertForSequenceClassification
+from dotenv import load_dotenv
 
-LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-TAVILY_API_KEY = "input-travilty-key"
-BERT_MODEL_PATH = "https://huggingface.co/DarkStrike/fact-checker-bert"  # folder you just downloaded
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+LOCAL_BERT_PATH = BASE_DIR / "fact_checker_bert"
+BERT_MODEL_PATH = os.getenv(
+    "BERT_MODEL_PATH",
+    str(LOCAL_BERT_PATH)
+    if (LOCAL_BERT_PATH / "model.safetensors").exists()
+    else "DarkStrike/fact-checker-bert",
+)
+
+if not TAVILY_API_KEY:
+    raise RuntimeError("TAVILY_API_KEY is missing. Copy .env.example to .env and set it.")
 
 # --- Load models at startup ---
 print("Loading embedding model...")

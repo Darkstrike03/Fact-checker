@@ -1,10 +1,20 @@
+import os
+from pathlib import Path
+
 import requests
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import faiss
+from dotenv import load_dotenv
 
-LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-TAVILY_API_KEY = "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"
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+if not TAVILY_API_KEY:
+    raise RuntimeError("TAVILY_API_KEY is missing. Copy .env.example to .env and set it.")
 
 # Load embedding model once at startup (not every query)
 print("Loading embedding model...")

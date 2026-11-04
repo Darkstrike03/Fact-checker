@@ -1,7 +1,17 @@
-import requests
+import os
+from pathlib import Path
 
-LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
-TAVILY_API_KEY = "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"
+import requests
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+if not TAVILY_API_KEY:
+    raise RuntimeError("TAVILY_API_KEY is missing. Copy .env.example to .env and set it.")
 
 def search_web(claim: str) -> str:
     """Search web for evidence about the claim using Tavily"""
