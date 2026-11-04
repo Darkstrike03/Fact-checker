@@ -8,7 +8,9 @@ from typing import Any
 import config
 import evidence
 import llm_client
+import model_manager
 import retrieval
+import verification
 from evaluation import prompts
 
 _bert_lock = threading.Lock()
@@ -78,6 +80,7 @@ def _fallback_candidates(
                     "text": sentence,
                     "title": result.get("title", ""),
                     "url": result.get("url", ""),
+                    "published_at": result.get("published_at", ""),
                     "page_index": index,
                     "sentence_index": sentence_index,
                 }
@@ -101,13 +104,19 @@ def retrieve_evidence(
     candidates = evidence.build_candidates(retrieval_result.get("results", []))
     if not candidates:
         candidates = _fallback_candidates(retrieval_result)
-    selected = evidence.rank_sentences(claim, candidates, top_k=top_k)
+    ranked = evidence.rank_sentences(
+        claim,
+        candidates,
+        top_k=max(top_k, config.EVIDENCE_CANDIDATES),
+    )
+    selected = ranked[:top_k]
     evidence_text = evidence.format_evidence(selected)
     if not evidence_text:
         evidence_text = "[1] No retrieved evidence was available."
     return {
         "retrieval": retrieval_result,
         "selected": selected,
+        "candidates": ranked,
         "evidence_text": evidence_text,
         "source_urls": [
             result.get("url", "")
@@ -124,28 +133,30 @@ def _classify(
     temperature: float,
     timeout: int,
 ) -> dict[str, Any]:
-    messages = prompts.build_ui_messages(claim, evidence_text)
+    messages = prompts.build_live_messages(claim, evidence_text)
     first = llm_client.chat(
         messages,
         model=model,
         temperature=temperature,
-        max_tokens=120,
+        max_tokens=280,
         timeout=timeout,
         retries=1,
     )
-    label = llm_client.parse_dataset_label(first.content)
+    parsed = llm_client.parse_live_response(first.content)
     raw_response = first.content
     retried = False
-    if label is None:
+    if parsed["label"] is None:
         retried = True
         retry_messages = list(messages) + [
             {"role": "assistant", "content": raw_response or "(empty)"},
             {
                 "role": "user",
                 "content": (
-                    "Invalid answer. Reply with exactly two lines:\n"
-                    "LABEL: SUPPORTED or REFUTED\n"
-                    "REASON: one short sentence."
+                    "Invalid answer. Reply with exactly four lines:\n"
+                    "LABEL: SUPPORTED, REFUTED, or UNVERIFIED\n"
+                    "CONFIDENCE: HIGH, MEDIUM, or LOW\n"
+                    "ANSWER: one or two sentences answering the claim.\n"
+                    "REASON: one or two sentences with citations such as [1]."
                 ),
             },
         ]
@@ -153,18 +164,21 @@ def _classify(
             retry_messages,
             model=model,
             temperature=temperature,
-            max_tokens=120,
+            max_tokens=280,
             timeout=timeout,
             retries=1,
         )
         raw_response = first.content + "\n--- retry ---\n" + second.content
-        label = llm_client.parse_dataset_label(second.content)
+        parsed = llm_client.parse_live_response(second.content)
     return {
-        "label": label,
+        "label": parsed["label"],
+        "confidence": parsed["confidence"],
+        "answer": parsed["answer"],
+        "citations": parsed["citations"],
         "raw_response": raw_response,
         "retried": retried,
         "latency_seconds": first.latency_seconds,
-        "reason": prompts.extract_reason(raw_response),
+        "reason": parsed["reason"],
     }
 
 
@@ -192,24 +206,28 @@ def check_claim(
         max_pages=max_pages,
         use_cache=use_cache,
     )
+    checks = verification.analyze(claim, evidence_bundle["selected"])
     result: dict[str, Any] = {
         "claim": claim,
         "model": model,
         "evidence_text": evidence_bundle["evidence_text"],
         "selected_evidence": evidence_bundle["selected"],
+        "candidates": evidence_bundle.get("candidates", []),
         "retrieval": evidence_bundle["retrieval"],
         "source_urls": evidence_bundle["source_urls"],
+        "checks": checks,
         "bert": None,
     }
 
     if not evidence_bundle["selected"]:
+        empty = verification.no_evidence_result()
         result.update(
             {
-                "label": None,
-                "reason": (
-                    "No usable evidence was retrieved. The evidence-only policy "
-                    "does not allow a SUPPORTED/REFUTED verdict."
-                ),
+                "label": empty["label"],
+                "confidence": empty["confidence"],
+                "answer": empty["answer"],
+                "reason": empty["reason"],
+                "citations": empty["citations"],
                 "raw_response": "",
                 "retried": False,
                 "latency_seconds": 0.0,
@@ -234,6 +252,9 @@ def check_claim(
         result.update(
             {
                 "label": None,
+                "confidence": "LOW",
+                "answer": "",
+                "citations": [],
                 "reason": f"LM Studio error: {exc}",
                 "raw_response": "",
                 "retried": False,
@@ -248,6 +269,13 @@ def check_claim(
         return result
 
     result.update(classification)
+    result.update(
+        verification.apply_guard(
+            classification,
+            checks,
+            len(evidence_bundle["selected"]),
+        )
+    )
     if use_bert:
         try:
             result["bert"] = bert_classify(claim)
@@ -277,17 +305,15 @@ def compare_models(
         max_pages=max_pages,
         use_cache=use_cache,
     )
+    checks = verification.analyze(claim, evidence_bundle["selected"])
     outputs = []
     for model in models:
         if not evidence_bundle["selected"]:
+            empty = verification.no_evidence_result()
             outputs.append(
                 {
                     "model": model,
-                    "label": None,
-                    "reason": (
-                        "No usable evidence was retrieved. The evidence-only "
-                        "policy does not allow a SUPPORTED/REFUTED verdict."
-                    ),
+                    **empty,
                     "raw_response": "",
                     "retried": False,
                     "latency_seconds": 0.0,
@@ -295,15 +321,22 @@ def compare_models(
             )
             continue
         try:
+            model_manager.ensure_only_model(model)
+            classification = _classify(
+                claim,
+                evidence_bundle["evidence_text"],
+                model=model,
+                temperature=0.0,
+                timeout=config.DEFAULT_LLM_TIMEOUT,
+            )
             outputs.append(
                 {
                     "model": model,
-                    **_classify(
-                        claim,
-                        evidence_bundle["evidence_text"],
-                        model=model,
-                        temperature=0.0,
-                        timeout=config.DEFAULT_LLM_TIMEOUT,
+                    **classification,
+                    **verification.apply_guard(
+                        classification,
+                        checks,
+                        len(evidence_bundle["selected"]),
                     ),
                 }
             )
@@ -312,6 +345,9 @@ def compare_models(
                 {
                     "model": model,
                     "label": None,
+                    "confidence": "LOW",
+                    "answer": "",
+                    "citations": [],
                     "reason": f"LM Studio error: {exc}",
                     "raw_response": "",
                     "retried": False,
@@ -321,6 +357,7 @@ def compare_models(
     return {
         "claim": claim,
         "evidence_bundle": evidence_bundle,
+        "checks": checks,
         "models": outputs,
         "bert": bert_classify(claim) if use_bert else None,
     }

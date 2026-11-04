@@ -32,21 +32,35 @@ def _ensure_venv() -> None:
         )
 
 
+def _cli_value(flag: str) -> str | None:
+    args = sys.argv[1:]
+    for index, value in enumerate(args):
+        if value == flag and index + 1 < len(args):
+            return args[index + 1]
+        if value.startswith(f"{flag}="):
+            return value.split("=", 1)[1]
+    return None
+
+
 _ensure_venv()
 os.environ["LOCAL_DEMO"] = "true"
 os.environ.setdefault("API_REQUEST_TIMEOUT", "150")
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+_requested_model = _cli_value("--model")
+if _requested_model:
+    os.environ["DEFAULT_MODEL"] = _requested_model
 
 import config  # noqa: E402
+import model_manager  # noqa: E402
 import uvicorn  # noqa: E402
 
 HOST = "127.0.0.1"
 PORT = 8000
 API_URL = f"http://{HOST}:{PORT}"
 LM_STUDIO_URL = "http://127.0.0.1:1234/v1/models"
-WARMUP_CLAIM = "COVID-19 vaccines reduce hospitalisation."
-MODELS = (config.DEFAULT_MODEL, config.SECOND_MODEL)
+WARMUP_CLAIM = "Apple released the iPhone 15 in September 2023."
+MODEL = config.DEFAULT_MODEL
 
 
 def _run(command: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
@@ -150,19 +164,17 @@ def _ensure_lm_studio(lms: str | None) -> None:
         print("Warning: `lms` was not found; relying on LM Studio to load models on demand.")
         return
 
-    result = _run([lms, "ps"], timeout=30)
-    loaded = _tail(result).lower()
-    for model in MODELS:
-        if model.lower() in loaded:
-            print(f"Model already loaded: {model}")
-            continue
-        print(f"Loading model: {model}")
-        load = _run([lms, "load", model, "-y"], timeout=180)
-        if load.returncode != 0:
-            print(f"Warning: could not preload {model}. It may load on first use.")
-            detail = _tail(load)
-            if detail:
-                print(detail)
+    print(f"Preparing one local model: {MODEL}")
+    try:
+        state = model_manager.ensure_only_model(MODEL)
+        loaded = state.get("loaded") or []
+        if loaded:
+            print(f"Loaded model(s): {', '.join(loaded)}")
+        else:
+            print("Warning: LM Studio did not report a loaded model yet.")
+    except Exception as exc:  # noqa: BLE001 - demo should still try to start
+        print(f"Warning: could not preload {MODEL}: {exc}")
+        print("The model may load on first use.")
 
 
 def _stop_lm_studio(lms: str | None) -> None:
@@ -176,21 +188,18 @@ def _warmup(open_browser: bool) -> bool:
     if not _wait_for(f"{API_URL}/", timeout=45):
         print("Warning: the API did not become ready in time.")
         return False
-    print("Warming up retrieval and both models (about 45-60 seconds)...")
+    print("Warming up retrieval and the local model (about 30-60 seconds)...")
     started = time.perf_counter()
-    payload = {
-        "claim": WARMUP_CLAIM,
-        "primary_model": config.DEFAULT_MODEL,
-        "secondary_model": config.SECOND_MODEL,
-    }
+    payload = {"claim": WARMUP_CLAIM, "model": MODEL}
     try:
-        result = _request_json(f"{API_URL}/compare", data=payload, timeout=180)
-        labels = ", ".join(
-            f"{item.get('model')}: {item.get('label') or 'No verdict'}"
-            for item in result.get("models", [])
-        )
+        result = _request_json(f"{API_URL}/check", data=payload, timeout=180)
+        output = (result.get("models") or [{}])[0]
         elapsed = time.perf_counter() - started
-        print(f"Warm-up complete in {elapsed:.1f}s: {labels}")
+        label = output.get("label") or "No verdict"
+        answer = output.get("answer") or output.get("reason") or ""
+        print(f"Warm-up complete in {elapsed:.1f}s: {label}")
+        if answer:
+            print(f"Answer: {answer}")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         print(f"Warm-up warning: HTTP {exc.code} {detail}")
@@ -228,6 +237,7 @@ def main() -> None:
     _stop_stale_api()
     print("=" * 64)
     print("Factly local demo")
+    print(f"Model: {MODEL}")
     print("Keep this window open. Press Ctrl+C to stop the API and LM Studio.")
     print("=" * 64)
     try:

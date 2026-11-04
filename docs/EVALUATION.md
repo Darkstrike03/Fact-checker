@@ -1,5 +1,7 @@
 # Evaluation
 
+This page documents the binary COVID-Fact **reference benchmark** for the retrieval and classification pipeline. The live product is a general social-media claim checker that can also return `UNVERIFIED`; those live results are not scored here because no labelled social-media benchmark is available yet.
+
 ## Task and labels
 
 The project uses the official COVID-Fact RTE data:

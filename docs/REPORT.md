@@ -8,18 +8,18 @@ Faculty supervisor: Dr. Anup Kumar Kolya
 
 ## Abstract
 
-This project builds a retrieval-augmented fact-checking system for COVID-19 claims and evaluates it against the COVID-Fact benchmark. The system replaces a hosted search API with local Playwright-based web retrieval, extracts and ranks evidence sentences using SBERT and FAISS, and asks two small quantized models running in LM Studio for a strict binary label aligned with the dataset: `SUPPORTED` or `REFUTED`. A full 401-example test evaluation is reported for gold evidence with two models and two prompt variants, together with a 60-example stratified retrieval sample. The best configuration, LFM2.5 1.2B with three few-shot examples, reaches 64.3% accuracy and 0.630 macro F1 with gold evidence. This is well below the COVID-Fact paper's fine-tuned RoBERTa-large (83.5% / 82.0) but has higher macro F1 than the paper's claim-only baseline (40.0), showing that the small model is less majority-class-biased while remaining substantially less accurate. The project also delivers a working Gradio application, a reproducible evaluation harness, cached retrieval snapshots, diagrams, tests, and a documented path to a hosted frontend with a laptop-backed API.
+This project builds a retrieval-augmented fact-checking system for social-media claims and evaluates its retrieval and classification pipeline against the COVID-Fact benchmark. The system replaces a hosted search API with local Playwright-based web retrieval, extracts and ranks evidence sentences using SBERT and FAISS, and asks a small quantized model running in LM Studio for an answer-first verdict: `SUPPORTED`, `REFUTED`, or `UNVERIFIED`. Deterministic checks on publication dates, key terms, source diversity, and citations can downgrade an unsupported model verdict. Only one model is loaded at a time, and both supported models remain selectable. A full 401-example test evaluation is reported for gold evidence with two models and two prompt variants, together with a 60-example stratified retrieval sample. The best configuration, LFM2.5 1.2B with three few-shot examples, reaches 64.3% accuracy and 0.630 macro F1 with gold evidence. This is well below the COVID-Fact paper's fine-tuned RoBERTa-large (83.5% / 82.0) but has higher macro F1 than the paper's claim-only baseline (40.0), showing that the small model is less majority-class-biased while remaining substantially less accurate. The COVID-Fact numbers are a labelled reference benchmark, not a social-media benchmark. The project also delivers a working web application, a reproducible evaluation harness, cached retrieval snapshots, diagrams, and a documented path to a hosted frontend with a laptop-backed API.
 
 ## 1. Introduction
 
-Social-media claims about COVID-19 spread quickly and are often near-misses: a real study is cited with a changed entity, number, or relation. A fact checker must retrieve relevant evidence, identify the specific detail that changed, and produce a label that is comparable across examples. Large hosted language models can do this well but are expensive, opaque, and dependent on external APIs. This project asks whether small local models, grounded in retrieved evidence and constrained to a strict label space, can provide a useful baseline.
+Social-media claims spread quickly and are often near-misses: a real event is cited with a changed entity, number, date, or relation. A fact checker must retrieve relevant evidence, identify the specific detail that changed, and avoid presenting weak evidence as confirmation. Large hosted language models can do this well but are expensive, opaque, and dependent on external APIs. This project asks whether small local models, grounded in retrieved evidence and constrained by deterministic checks, can provide a useful baseline.
 
 The project has four goals:
 
-1. Reproduce the binary COVID-Fact task with the official data and labels.
-2. Replace the earlier hosted search API dependency with a local, demonstrable Playwright retrieval pipeline.
+1. Build a live, evidence-first checker for general social-media claims with `SUPPORTED`, `REFUTED`, and `UNVERIFIED` outcomes.
+2. Reproduce the binary COVID-Fact task with the official data and labels as a reference benchmark.
 3. Evaluate two small LM Studio models under controlled gold, retrieved, and claim-only conditions.
-4. Deliver a usable interface and a reproducible evaluation/reporting workflow.
+4. Deliver a usable interface, one-model-at-a-time operation on an 8 GB laptop, and a reproducible evaluation/reporting workflow.
 
 ## 2. The COVID-Fact benchmark
 
@@ -43,29 +43,31 @@ The paper's label names are `SUPPORTED` and `REFUTED`. This project uses exactly
 
 ![Live pipeline](diagrams/live_pipeline.png)
 
-1. The user enters a claim in the Gradio app.
-2. Playwright searches Brave Search and, if necessary, Google News RSS or Wikipedia.
-3. Up to two or three pages are fetched, with images, media, fonts, and stylesheets blocked for speed.
-4. `trafilatura` extracts readable text; BeautifulSoup is the fallback.
-5. Page text is split into deduplicated sentences. Search snippets are used when page extraction fails.
-6. Sentence-BERT (`all-MiniLM-L6-v2`) embeds the claim and candidates; FAISS cosine similarity selects the top-k.
-7. The selected sentences are formatted as numbered evidence blocks.
-8. Two LM Studio models receive the same evidence and return a strict `LABEL`/`REASON` response.
-9. The UI shows the label, reason, evidence with URLs, optional BERT hint, and run metadata.
-10. If no usable evidence is retrieved, the UI returns **No verdict** instead of guessing.
+1. The user enters a claim in the web UI, Gradio UI, or API.
+2. `model_manager.ensure_only_model` unloads the current model if the user selected a different one.
+3. Playwright searches Brave Search and, if necessary, Google News RSS or Wikipedia.
+4. Up to two or three pages are fetched, with images, media, fonts, and stylesheets blocked for speed.
+5. `trafilatura` extracts readable text and publication metadata; BeautifulSoup is the fallback.
+6. Page text is split into deduplicated sentences. Search snippets are used when page extraction fails.
+7. Sentence-BERT (`all-MiniLM-L6-v2`) embeds the claim and candidates; FAISS cosine similarity ranks up to 20 candidates, and the top five are used in the prompt.
+8. The selected passages are formatted as numbered, date-aware evidence blocks.
+9. One selected LM Studio model returns a label, confidence, direct answer, reason, and citations.
+10. `verification.analyze` and `verification.apply_guard` check dates, key terms, source diversity, plan-only evidence, and citation validity; unsupported verdicts are downgraded to `UNVERIFIED`.
+11. The UI shows the answer first, then confidence, reason, citations, the five passages used, the wider candidate set, and run metadata.
+12. If no usable evidence is retrieved, the UI returns **UNVERIFIED** instead of guessing.
 
 ### 3.2 Models
 
 | Role | Model | Quantization | Context |
 |---|---|---|---|
 | Primary | `liquid/lfm2.5-1.2b` | Q4_K_M | 128k |
-| Comparison | `qwen3-0.6b` | Q3_K_L | 32k |
+| Alternate | `qwen3-0.6b` | Q3_K_L | 32k |
 
-Both are served by LM Studio's OpenAI-compatible endpoint at `http://localhost:1234/v1/chat/completions`. Requests send `reasoning_effort=none`; without it, Qwen3 spends its entire completion budget on hidden reasoning tokens and returns empty content.
+Only one model is resident at a time on the 8 GB demo laptop. Models are served by LM Studio's OpenAI-compatible endpoint at `http://localhost:1234/v1/chat/completions`. Requests send `reasoning_effort=none`; without it, Qwen3 spends its entire completion budget on hidden reasoning tokens and returns empty content.
 
-### 3.3 Label parser
+### 3.3 Live and evaluation parsers
 
-The parser accepts only `SUPPORTED` and `REFUTED`, including prefixed forms such as `LABEL: SUPPORTED`. It rejects `True`, `False`, `Misleading`, `Unverifiable`, empty output, and ambiguous responses containing both labels. Invalid answers receive one correction retry. Persisting invalid answers are recorded separately and excluded from metric denominators.
+The live parser accepts `SUPPORTED`, `REFUTED`, or `UNVERIFIED`, including prefixed forms such as `LABEL: SUPPORTED`, and extracts confidence, answer, reason, and citations. Invalid answers receive one correction retry. The evaluation parser is deliberately stricter: it accepts only `SUPPORTED` and `REFUTED`, and it rejects `UNVERIFIED`, `True`, `False`, `Misleading`, empty output, and ambiguous responses containing both binary labels. Persisting invalid evaluation answers are recorded separately and excluded from metric denominators.
 
 ### 3.4 Evaluation harness
 
@@ -169,32 +171,28 @@ The main finding is that evidence grounding and a strict prompt are not enough t
 
 The retrieval layer is deliberately local and inspectable. Brave Search through Playwright worked where Bing and DuckDuckGo did not, and the cache makes evaluation reproducible. The main retrieval risk is page extraction quality: paywalls, JavaScript-heavy pages, and changing search results can starve the model of evidence. Snippet fallback helps but is not equivalent to full-page retrieval.
 
-The optional BERT classifier is retained as a hint only. Its local weights do not expose explicit `id2label` metadata, and the earlier training setup used `credible`/`not_credible` semantics. The final verdict therefore relies on the evidence-grounded LLM path, and the BERT output is clearly labelled as a hint.
+The live extension adds a deterministic verification layer on top of the model. In a representative failure, LFM returned `SUPPORTED HIGH` for a date-specific claim while citing sources that did not connect the claim's key terms to the claimed date. The guard downgraded the result to `UNVERIFIED LOW` because no single evidence item both matched the date and covered all key terms. This is the central design lesson: the model's prose can look confident while its evidence does not actually support the claim.
 
 ## 7. Limitations
 
 - Only two small quantized models were tested.
 - The full test split was used for the final comparison; LFM prompt selection used dev, while Qwen prompt selection used a small dev subset and the full test split is reported for transparency.
 - The retrieval evaluation is a 60-example sample, not a full 401-claim retrieval benchmark.
+- COVID-Fact is the only labelled benchmark; live social-media performance is qualitative and the demo has not been evaluated on a social-media dataset.
+- The date and entity guards are conservative. They can downgrade a true claim when sources omit a matching date or use synonyms rather than the claim's exact terms.
 - Live retrieval is time-sensitive and search-engine behavior changes.
 - No human evaluation of reasons or citation faithfulness was performed.
 - The claim-only baseline prompt and the paper's claim-only classifier are not identical systems.
 
 ## 8. Future work
 
-The immediate next deliverable is a hosted frontend with the laptop as the backend:
+The hosted frontend, FastAPI backend, model-selection endpoint, access-code gate, rate limits, and Cloudflare Tunnel workflow are implemented. The next evaluation step is to create a small labelled social-media claim set and measure end-to-end verdict quality, citation faithfulness, and abstention behaviour.
 
-- static frontend on GitHub Pages or Netlify;
-- a small FastAPI service on the laptop that wraps `pipeline.check_claim` and the LM Studio endpoint;
-- a Cloudflare Tunnel or ngrok tunnel for HTTPS access;
-- CORS, authentication, rate limiting, and request timeouts in the API layer;
-- health and model-selection endpoints for the frontend.
-
-Other extensions include full retrieval evaluation, better prompt ensembling, calibration and abstention, a properly labelled BERT gate, multilingual claims, and a WhatsApp/Telegram bot.
+Other extensions include full retrieval evaluation, prompt ensembling, calibrated confidence, broader date and entity normalization, multilingual claims, and a WhatsApp/Telegram bot.
 
 ## 9. Conclusion
 
-The project delivers a working retrieval-grounded fact-checking application, a reproducible COVID-Fact evaluation harness, cached retrieval evidence, tests, diagrams, and a documented deployment path. The best small-model configuration reaches 64.3% accuracy / 0.630 macro F1 with gold evidence, which is a useful local baseline but far from the paper's fine-tuned RoBERTa. The results also show that prompt choice can change small-model behaviour more than model size, and that class-balanced metrics are necessary on this dataset.
+The project delivers a working evidence-first fact-checking application, a reproducible COVID-Fact evaluation harness, cached retrieval evidence, diagrams, and a documented deployment path. The live interface generalizes beyond COVID-19, exposes the five passages used for each verdict, returns `UNVERIFIED` when evidence is insufficient, and enforces one loaded model at a time on an 8 GB laptop. The best small-model configuration reaches 64.3% accuracy / 0.630 macro F1 with gold evidence on COVID-Fact, which is a useful local baseline but far from the paper's fine-tuned RoBERTa. The results also show that prompt choice can change small-model behaviour more than model size, and that class-balanced metrics are necessary on this dataset.
 
 ## References
 

@@ -26,16 +26,26 @@ Definitions:
 Use only the provided evidence. Do not use outside knowledge.
 Answer with exactly one word: SUPPORTED or REFUTED. Do not explain."""
 
-UI_SYSTEM_PROMPT = """You are a careful evidence-based fact checker for COVID-19 claims.
-Use only the provided evidence to decide whether the claim is SUPPORTED or REFUTED.
+UI_SYSTEM_PROMPT = """You are a careful fact checker for claims circulating on social media.
+Use only the provided evidence. Do not use outside knowledge.
 
-Definitions:
-- SUPPORTED: the evidence entails the claim.
-- REFUTED: the evidence contradicts the claim.
+Decide the claim using one of three labels:
+- SUPPORTED: the evidence directly confirms every key element of the claim.
+- REFUTED: the evidence directly contradicts at least one key element.
+- UNVERIFIED: the evidence is insufficient, only weakly related, conflicting, or only describes plans, expectations, or announcements.
+
+Rules:
+1. Break the claim into who, what, where, and when. Every key element must be supported.
+2. A plan, schedule, headline, or announcement that an event will happen does not prove that it happened.
+3. If the evidence names a different person, place, date, or action, do not mark the claim SUPPORTED.
+4. Use citation numbers like [1] or [2] from the evidence after factual statements.
+5. Be conservative. If the evidence does not directly establish the claim, use UNVERIFIED.
 
 Answer in exactly this format, with no extra text:
 LABEL: SUPPORTED
-REASON: one short sentence grounded in the evidence."""
+CONFIDENCE: MEDIUM
+ANSWER: one or two sentences that directly answer the claim.
+REASON: one or two sentences explaining why, with citations such as [1]."""
 
 
 def _format_example(example: dict[str, str]) -> list[dict[str, str]]:
@@ -141,10 +151,15 @@ def build_ui_messages(claim: str, evidence: str) -> list[dict[str, str]]:
             "content": (
                 f"Evidence:\n{evidence.strip()}\n\n"
                 f"Claim:\n{claim.strip()}\n\n"
-                "Return the LABEL and REASON now."
+                "Return the LABEL, CONFIDENCE, ANSWER, and REASON now."
             ),
         },
     ]
+
+
+def build_live_messages(claim: str, evidence: str) -> list[dict[str, str]]:
+    """Prompt used by the general social-media fact-checking UI."""
+    return build_ui_messages(claim, evidence)
 
 
 def extract_reason(text: str) -> str:

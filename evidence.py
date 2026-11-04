@@ -69,6 +69,7 @@ def build_candidates(pages: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                     "text": sentence,
                     "title": clean_text(page.get("title", "")),
                     "url": page.get("url", ""),
+                    "published_at": page.get("published_at", ""),
                     "page_index": page_index,
                     "sentence_index": sentence_index,
                 }
@@ -163,7 +164,9 @@ def format_evidence(
     for number, sentence in enumerate(sentences, start=1):
         title = sentence.get("title") or "Untitled source"
         text = sentence.get("text", "")
-        line = f"[{number}] {title}: {text}"
+        published = str(sentence.get("published_at", "")).strip()
+        date_prefix = f" ({published})" if published else ""
+        line = f"[{number}]{date_prefix} {title}: {text}"
         if total + len(line) > max_chars:
             break
         lines.append(line)

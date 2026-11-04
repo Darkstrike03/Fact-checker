@@ -5,6 +5,7 @@
   const STORAGE = {
     apiBaseUrl: "factly.apiBaseUrl",
     accessCode: "factly.accessCode",
+    model: "factly.model",
   };
   const HEALTH_TIMEOUT = 15000;
   const HEALTH_RETRY_MS = 10000;
@@ -29,10 +30,13 @@
     apiBaseUrl: normalizeBase(readStorage(STORAGE.apiBaseUrl) || CONFIG.apiBaseUrl || ""),
     accessCode: readStorage(STORAGE.accessCode) || "",
     models: [],
+    loadedModels: [],
+    model: readStorage(STORAGE.model) || CONFIG.primaryModel || "",
     busy: false,
     localDemo: false,
     evaluationLoaded: false,
     healthRetryTimer: null,
+    lastResult: null,
   };
 
   const el = (tag, className, text) => {
@@ -62,13 +66,16 @@
     claimForm: $("claimForm"),
     claimInput: $("claimInput"),
     submitButton: $("submitButton"),
-    compareToggle: $("compareToggle"),
-    primaryModel: $("primaryModel"),
-    secondaryModel: $("secondaryModel"),
-    modelPickers: $("modelPickers"),
-    bertToggle: $("bertToggle"),
+    modelSelect: $("modelSelect"),
+    modelStatus: $("modelStatus"),
     charCount: $("charCount"),
     suggestions: $("suggestions"),
+    evidenceButton: $("evidenceButton"),
+    evidenceCount: $("evidenceCount"),
+    evidencePanel: $("evidencePanel"),
+    evidenceContent: $("evidenceContent"),
+    closeEvidence: $("closeEvidence"),
+    evidenceScrim: $("evidenceScrim"),
     views: {
       check: $("view-check"),
       evaluation: $("view-evaluation"),
@@ -277,7 +284,7 @@
       const lm = health.lm_studio || {};
       if (lm.reachable) {
         const count = Array.isArray(lm.chat_models) ? lm.chat_models.length : 0;
-        setConnection("online", `Backend + LM Studio (${count} models)`);
+        setConnection("online", `Backend + LM Studio (${count} available)`);
         if (showSettingsStatus) {
           setSettingsStatus("Connected. LM Studio is reachable.", "success");
         }
@@ -302,6 +309,21 @@
     }
   }
 
+  function modelKey(value) {
+    return String(value || "").trim().toLowerCase().replace(/\\/g, "/");
+  }
+
+  function modelIsLoaded(model) {
+    const key = modelKey(model);
+    return state.loadedModels.some((loaded) => {
+      const loadedKey = modelKey(loaded);
+      return (
+        loadedKey === key ||
+        loadedKey.split("/").pop() === key.split("/").pop()
+      );
+    });
+  }
+
   function populateModelSelect(select, models, preferred) {
     const current = preferred || select.value;
     const unique = Array.from(new Set(models.filter(Boolean)));
@@ -309,7 +331,7 @@
     for (const model of unique) {
       const option = document.createElement("option");
       option.value = model;
-      option.textContent = modelLabel(model);
+      option.textContent = `${modelLabel(model)}${modelIsLoaded(model) ? " · loaded" : ""}`;
       select.append(option);
     }
     if (current && unique.includes(current)) {
@@ -319,30 +341,86 @@
     }
   }
 
+  function updateModelStatus(message = "", loading = false) {
+    if (!dom.modelStatus) return;
+    dom.modelStatus.classList.toggle("loading", loading);
+    if (message) {
+      dom.modelStatus.textContent = message;
+      return;
+    }
+    const model = dom.modelSelect ? dom.modelSelect.value : state.model;
+    if (!model) {
+      dom.modelStatus.textContent = "No model selected";
+    } else if (modelIsLoaded(model)) {
+      dom.modelStatus.textContent = "Ready · one model loaded";
+    } else {
+      dom.modelStatus.textContent = "Loads on first check";
+    }
+  }
+
   async function loadModels() {
     let models = [];
+    let loaded = [];
     try {
       const payload = await apiRequest("/models", { timeout: HEALTH_TIMEOUT });
       models = Array.isArray(payload.models) ? payload.models : [];
+      loaded = Array.isArray(payload.loaded) ? payload.loaded : [];
       const fallback = [payload.default, payload.secondary].filter(Boolean);
       models = Array.from(new Set([...models, ...fallback]));
+      state.loadedModels = loaded;
+      if (!state.model && payload.default) state.model = payload.default;
     } catch (error) {
       models = [];
     }
     if (!models.length) {
-      models = [CONFIG.primaryModel || "liquid/lfm2.5-1.2b", CONFIG.secondaryModel || "qwen3-0.6b"];
+      models = [
+        CONFIG.primaryModel || "liquid/lfm2.5-1.2b",
+        CONFIG.secondaryModel || "qwen3-0.6b",
+      ];
     }
     state.models = models;
-    populateModelSelect(
-      dom.primaryModel,
-      models,
-      dom.primaryModel.value || CONFIG.primaryModel,
-    );
-    populateModelSelect(
-      dom.secondaryModel,
-      models,
-      dom.secondaryModel.value || CONFIG.secondaryModel || models[1],
-    );
+    const preferred = state.model || CONFIG.primaryModel || models[0];
+    populateModelSelect(dom.modelSelect, models, preferred);
+    state.model = dom.modelSelect.value;
+    writeStorage(STORAGE.model, state.model);
+    updateModelStatus();
+  }
+
+  async function selectModel() {
+    const model = dom.modelSelect.value;
+    if (!model) return;
+    state.model = model;
+    writeStorage(STORAGE.model, model);
+    updateModelStatus();
+
+    if (!state.localDemo && !state.accessCode) {
+      updateModelStatus("Connect to switch models");
+      return;
+    }
+    if (modelIsLoaded(model) && state.loadedModels.length === 1) {
+      updateModelStatus();
+      return;
+    }
+    if (!modelIsLoaded(model) && state.loadedModels.length === 1) {
+      updateModelStatus("Switching model — unloading the previous one…", true);
+    } else {
+      updateModelStatus("Loading model…", true);
+    }
+    dom.modelSelect.disabled = true;
+    try {
+      const payload = await apiRequest("/models/select", {
+        method: "POST",
+        body: { model },
+        timeout: 180000,
+      });
+      state.loadedModels = Array.isArray(payload.loaded) ? payload.loaded : [model];
+      populateModelSelect(dom.modelSelect, state.models, model);
+      updateModelStatus("Ready · one model loaded");
+    } catch (error) {
+      updateModelStatus("Will load on the next check");
+    } finally {
+      dom.modelSelect.disabled = false;
+    }
   }
 
   function setView(view) {
@@ -354,6 +432,7 @@
       button.classList.toggle("active", button.dataset.viewLink === target);
     });
     closeSidebar();
+    closeEvidencePanel();
     if (target === "evaluation") loadEvaluation();
     if (target === "check") dom.claimInput.focus({ preventScroll: true });
   }
@@ -364,6 +443,17 @@
 
   function openSidebar() {
     dom.body.classList.add("sidebar-open");
+  }
+
+  function openEvidencePanel() {
+    dom.body.classList.add("evidence-open");
+    if (dom.closeEvidence) {
+      window.setTimeout(() => dom.closeEvidence.focus({ preventScroll: true }), 60);
+    }
+  }
+
+  function closeEvidencePanel() {
+    dom.body.classList.remove("evidence-open");
   }
 
   function openSettings(message = "") {
@@ -440,6 +530,14 @@
     dom.suggestions.classList.remove("hidden");
     dom.transcript.replaceChildren();
     dom.claimInput.value = "";
+    state.lastResult = null;
+    if (dom.evidenceCount) dom.evidenceCount.textContent = "0";
+    if (dom.evidenceContent) {
+      dom.evidenceContent.replaceChildren();
+      const empty = el("div", "evidence-empty");
+      empty.append(el("p", "", "Run a check to see the passages behind the answer."));
+      dom.evidenceContent.append(empty);
+    }
     updateCharCount();
     autoResize();
     dom.claimInput.focus({ preventScroll: true });
@@ -460,19 +558,13 @@
     dom.transcript.append(message);
   }
 
-  function assistantHead(mode) {
+  function assistantHead() {
     const head = el("div", "assistant-head");
     const mark = el("span", "assistant-mark");
     mark.append(icon("sparkle"));
     const text = el("div");
     text.append(el("strong", "", "Factly"));
-    text.append(
-      el(
-        "span",
-        "",
-        mode === "compare" ? " · comparing two local models" : " · evidence-grounded verdict",
-      ),
-    );
+    text.append(el("span", "", " · evidence-grounded answer"));
     head.append(mark, text);
     return head;
   }
@@ -495,7 +587,7 @@
       detail.textContent =
         seconds < 25
           ? `Searching, fetching pages, and ranking evidence… ${seconds}s`
-          : `Still working — cold retrieval can take 45–60s… ${seconds}s`;
+          : `Still working — the first check can load a model and take 45–60s… ${seconds}s`;
     }, 1000);
     return { message, timer };
   }
@@ -503,7 +595,7 @@
   function appendError(messageText) {
     const message = el("div", "message assistant");
     const card = el("div", "assistant-card");
-    card.append(assistantHead("check"));
+    card.append(assistantHead());
     const callout = el("div", "callout error");
     callout.append(icon("warning"));
     callout.append(el("span", "", messageText));
@@ -517,6 +609,13 @@
     message.append(card);
     dom.transcript.append(message);
     message.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (dom.evidenceContent) {
+      dom.evidenceContent.replaceChildren();
+      const panelError = el("div", "callout error");
+      panelError.append(icon("warning"));
+      panelError.append(el("span", "", "Evidence is unavailable for this request."));
+      dom.evidenceContent.append(panelError);
+    }
   }
 
   function metaChip(label) {
@@ -524,72 +623,171 @@
     return chip;
   }
 
-  function verdictCard(output) {
-    const card = el("article", "verdict-card");
-    const top = el("div", "verdict-top");
-    top.append(el("span", "model-name", modelLabel(output.model)));
-    const label = output.label === "SUPPORTED" || output.label === "REFUTED" ? output.label : null;
-    const badge = el(
-      "span",
-      `badge ${label === "SUPPORTED" ? "supported" : label === "REFUTED" ? "refuted" : "neutral"}`,
-      label || "No verdict",
-    );
-    top.append(badge);
+  function answerCard(output, quality) {
+    const label = ["SUPPORTED", "REFUTED", "UNVERIFIED"].includes(output.label)
+      ? output.label
+      : "UNVERIFIED";
+    const card = el("article", `answer-card ${label.toLowerCase()}`);
+    const top = el("div", "answer-top");
+    top.append(el("span", `badge ${label.toLowerCase()}`, label));
+    top.append(el("span", "answer-kicker", "Bottom line"));
+    if (output.confidence) {
+      top.append(el("span", "confidence-chip", `${output.confidence} confidence`));
+    }
+    if (quality && quality.relevance_label) {
+      top.append(
+        el("span", "evidence-strength", `Evidence: ${quality.relevance_label}`),
+      );
+    }
     card.append(top);
+
     card.append(
       el(
         "p",
-        "verdict-reason",
-        output.reason || "No reason was returned for this claim.",
+        "answer-text",
+        output.answer || output.reason || "No answer was returned for this claim.",
       ),
     );
-    const latency = Number(output.latency_seconds);
-    const details = [
-      Number.isFinite(latency) ? `${latency.toFixed(1)}s` : "—",
-      output.retried ? "retried for a strict label" : "single pass",
-    ];
-    card.append(el("div", "verdict-meta", details.join(" · ")));
+    if (output.reason && output.reason !== output.answer) {
+      card.append(el("p", "answer-why", output.reason));
+    }
+
+    const actions = el("div", "answer-actions");
+    const evidence = (state.lastResult && state.lastResult.evidence) || {};
+    const selected = evidence.selected || [];
+    if (selected.length) {
+      const button = el("button", "ghost-button", `View evidence (${selected.length})`);
+      button.type = "button";
+      button.addEventListener("click", openEvidencePanel);
+      actions.append(button);
+    }
+    if (actions.childElementCount) card.append(actions);
     return card;
   }
 
-  function sourceCard(item) {
-    const card = el("article", "source-card");
+  function evidenceItem(item, number, used) {
+    const card = el("article", "evidence-item");
+    const head = el("div", "evidence-item-head");
+    head.append(el("span", "evidence-number", `[${number}]`));
+    const title = el("div", "evidence-item-title");
     const url = safeUrl(item.url);
-    const titleRow = el("div", "source-title");
     if (url) {
       const link = el("a", "", item.title || hostLabel(url) || "Untitled source");
       link.href = url;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      titleRow.append(link, icon("external"));
+      title.append(link, icon("external"));
     } else {
-      titleRow.append(el("span", "", item.title || "Untitled source"));
+      title.append(el("span", "", item.title || "Untitled source"));
     }
-    card.append(titleRow);
-    if (item.text) card.append(el("p", "source-snippet", item.text));
-    const foot = el("div", "source-foot");
-    foot.append(el("span", "", hostLabel(item.url) || "source"));
+    head.append(title);
+    card.append(head);
+    if (item.text) card.append(el("p", "evidence-snippet", item.text));
+
+    const meta = el("div", "evidence-meta");
+    meta.append(el("span", "", hostLabel(item.url) || "source"));
+    if (item.published_at) meta.append(el("span", "", item.published_at));
     const score = Number(item.score);
     if (Number.isFinite(score) && score > 0) {
-      foot.append(el("span", "source-score", `${Math.round(Math.min(1, score) * 100)}% match`));
+      meta.append(
+        el("span", "relevance", `relevance ${Math.round(Math.min(1, score) * 100)}%`),
+      );
     }
-    card.append(foot);
+    if (used) meta.append(el("span", "", "used in verdict"));
+    card.append(meta);
     return card;
+  }
+
+  function setEvidencePending(claim) {
+    if (dom.evidenceCount) dom.evidenceCount.textContent = "0";
+    if (!dom.evidenceContent) return;
+    dom.evidenceContent.replaceChildren();
+    const pending = el("div", "evidence-empty");
+    pending.append(el("p", "", `Reading sources for: ${claim}`));
+    dom.evidenceContent.append(pending);
+  }
+
+  function renderEvidencePanel(payload) {
+    state.lastResult = payload;
+    const evidence = payload.evidence || {};
+    const selected = evidence.selected || [];
+    const candidates = evidence.candidates || selected;
+    if (dom.evidenceCount) dom.evidenceCount.textContent = String(selected.length);
+    if (!dom.evidenceContent) return;
+    dom.evidenceContent.replaceChildren();
+
+    if (evidence.error) {
+      const warning = el("div", "callout warning");
+      warning.append(icon("warning"));
+      warning.append(el("span", "", `Retrieval note: ${evidence.error}`));
+      dom.evidenceContent.append(warning);
+    }
+
+    if (!selected.length) {
+      const empty = el("div", "callout warning");
+      empty.append(icon("warning"));
+      empty.append(
+        el(
+          "span",
+          "",
+          "No usable evidence was retrieved. Factly therefore returns UNVERIFIED instead of guessing.",
+        ),
+      );
+      dom.evidenceContent.append(empty);
+      return;
+    }
+
+    const summary = el("div", "evidence-summary");
+    summary.append(metaChip(providerLabel(evidence.provider)));
+    summary.append(metaChip(`${evidence.selected.length} used`));
+    summary.append(metaChip(`${candidates.length} retrieved`));
+    if (payload.quality && payload.quality.source_count) {
+      summary.append(metaChip(`${payload.quality.source_count} sources`));
+    }
+    dom.evidenceContent.append(summary);
+
+    const section = el("section", "evidence-section");
+    section.append(el("h3", "", "Used in the verdict"));
+    const list = el("ol", "evidence-list");
+    selected.forEach((item, index) => {
+      list.append(evidenceItem(item, index + 1, true));
+    });
+    section.append(list);
+    dom.evidenceContent.append(section);
+
+    if (candidates.length > selected.length) {
+      const more = el("details", "evidence-more");
+      more.append(
+        el(
+          "summary",
+          "",
+          `More retrieved passages (${candidates.length - selected.length})`,
+        ),
+      );
+      const moreList = el("ol", "evidence-more-list");
+      candidates.slice(selected.length).forEach((item, index) => {
+        moreList.append(evidenceItem(item, selected.length + index + 1, false));
+      });
+      more.append(moreList);
+      dom.evidenceContent.append(more);
+    }
   }
 
   function renderAssistant(payload, loading) {
     const message = el("div", "message assistant");
     const card = el("div", "assistant-card");
-    card.append(assistantHead(payload.mode));
+    card.append(assistantHead());
 
-    const meta = el("div", "meta-row");
+    const output = (payload.models || [])[0] || {};
     const evidence = payload.evidence || {};
+    const meta = el("div", "meta-row");
+    meta.append(metaChip(modelLabel(output.model)));
     meta.append(metaChip(providerLabel(evidence.provider)));
     meta.append(metaChip(`${evidence.pages || 0} pages`));
     if (evidence.cached) meta.append(metaChip("cached snapshot"));
-    meta.append(metaChip(payload.mode === "compare" ? "2 models" : "1 model"));
-    if (payload.bert && !payload.bert.error) {
-      meta.append(metaChip(`BERT ${payload.bert.label || "hint"}`));
+    const latency = Number(output.latency_seconds);
+    if (Number.isFinite(latency) && latency > 0) {
+      meta.append(metaChip(`${latency.toFixed(1)}s`));
     }
     card.append(meta);
 
@@ -600,51 +798,23 @@
       card.append(warning);
     }
 
-    const verdictGrid = el(
-      "div",
-      `verdict-grid${payload.models && payload.models.length > 1 ? "" : " single"}`,
-    );
-    for (const output of payload.models || []) {
-      verdictGrid.append(verdictCard(output));
-    }
-    card.append(verdictGrid);
-
-    const evidenceHead = el("div", "evidence-head");
-    evidenceHead.append(el("h3", "", "Evidence used"));
-    evidenceHead.append(
-      el(
-        "span",
-        "",
-        evidence.selected && evidence.selected.length
-          ? `${evidence.selected.length} sentences ranked by relevance`
-          : "no usable evidence",
-      ),
-    );
-    card.append(evidenceHead);
-
-    if (evidence.selected && evidence.selected.length) {
-      const grid = el("div", "source-grid");
-      for (const item of evidence.selected) grid.append(sourceCard(item));
-      card.append(grid);
-    } else {
-      const callout = el("div", "callout warning");
+    if (!output.label) {
+      const callout = el("div", "callout error");
       callout.append(icon("warning"));
       callout.append(
-        el(
-          "span",
-          "",
-          "No usable evidence was retrieved, so the evidence-only policy returned no verdict.",
-        ),
+        el("span", "", output.reason || "The model did not return a usable verdict."),
       );
       card.append(callout);
+    } else {
+      card.append(answerCard(output, payload.quality));
     }
 
     const rawDetails = (payload.models || [])
-      .filter((output) => output.raw_response)
-      .map((output) => {
+      .filter((item) => item.raw_response)
+      .map((item) => {
         const details = el("details", "details");
-        details.append(el("summary", "", `Raw output — ${modelLabel(output.model)}`));
-        details.append(el("pre", "", output.raw_response));
+        details.append(el("summary", "", `Raw output — ${modelLabel(item.model)}`));
+        details.append(el("pre", "", item.raw_response));
         return details;
       });
     for (const details of rawDetails) card.append(details);
@@ -676,30 +846,30 @@
 
     state.busy = true;
     dom.submitButton.disabled = true;
+    if (dom.modelSelect) dom.modelSelect.disabled = true;
     hideWelcome();
     appendUserMessage(claim);
     dom.claimInput.value = "";
     updateCharCount();
     autoResize();
+    setEvidencePending(claim);
     const loading = appendLoading();
-    const compare = dom.compareToggle.checked;
-    const payload = {
-      claim,
-      use_bert: dom.bertToggle.checked,
-    };
-    if (compare) {
-      payload.primary_model = dom.primaryModel.value;
-      payload.secondary_model = dom.secondaryModel.value;
-    } else {
-      payload.model = dom.primaryModel.value;
-    }
+    const model = dom.modelSelect.value || state.model;
+    const payload = { claim, model };
 
     try {
-      const result = await apiRequest(compare ? "/compare" : "/check", {
+      const result = await apiRequest("/check", {
         method: "POST",
         body: payload,
+        timeout: 180000,
       });
       window.clearInterval(loading.timer);
+      const usedModel = ((result.models || [])[0] || {}).model || model;
+      state.model = usedModel;
+      state.loadedModels = [usedModel];
+      populateModelSelect(dom.modelSelect, state.models, usedModel);
+      updateModelStatus("Ready · one model loaded");
+      renderEvidencePanel(result);
       renderAssistant(result, loading);
       refreshHealth();
     } catch (error) {
@@ -712,6 +882,7 @@
     } finally {
       state.busy = false;
       dom.submitButton.disabled = false;
+      if (dom.modelSelect) dom.modelSelect.disabled = false;
       dom.claimInput.focus({ preventScroll: true });
     }
   }
@@ -843,9 +1014,15 @@
         submitClaim();
       }
     });
-    dom.compareToggle.addEventListener("change", () => {
-      dom.secondaryModel.disabled = !dom.compareToggle.checked;
-      dom.modelPickers.classList.toggle("disabled", !dom.compareToggle.checked);
+    dom.modelSelect.addEventListener("change", selectModel);
+    dom.evidenceButton.addEventListener("click", openEvidencePanel);
+    dom.closeEvidence.addEventListener("click", closeEvidencePanel);
+    dom.evidenceScrim.addEventListener("click", closeEvidencePanel);
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeEvidencePanel();
+        closeSidebar();
+      }
     });
     dom.suggestions.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-claim]");
@@ -861,8 +1038,7 @@
 
   function init() {
     bindEvents();
-    dom.secondaryModel.disabled = !dom.compareToggle.checked;
-    dom.modelPickers.classList.toggle("disabled", !dom.compareToggle.checked);
+    updateModelStatus();
     dom.claimInput.focus({ preventScroll: true });
     refreshHealth();
     loadModels();

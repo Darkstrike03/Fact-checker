@@ -20,10 +20,11 @@ from pydantic import BaseModel, Field, field_validator
 
 import config
 import llm_client
+import model_manager
 import pipeline
 
 APP_NAME = "Factly API"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 MAX_REQUEST_BYTES = 16_384
 MIN_ACCESS_CODE_LENGTH = 16
 
@@ -125,7 +126,7 @@ class ClaimRequest(BaseModel):
         ...,
         min_length=3,
         max_length=config.API_MAX_CLAIM_CHARS,
-        description="COVID-19 claim to check.",
+        description="Social-media claim to check.",
     )
     model: str | None = Field(default=None, max_length=160)
     use_bert: bool = False
@@ -148,7 +149,7 @@ class CompareRequest(BaseModel):
         ...,
         min_length=3,
         max_length=config.API_MAX_CLAIM_CHARS,
-        description="COVID-19 claim to check.",
+        description="Social-media claim to check.",
     )
     primary_model: str | None = Field(default=None, max_length=160)
     secondary_model: str | None = Field(default=None, max_length=160)
@@ -167,26 +168,46 @@ class CompareRequest(BaseModel):
         return cleaned
 
 
+class ModelSelectRequest(BaseModel):
+    model: str = Field(..., min_length=1, max_length=160)
+
+
+def _available_models() -> list[str]:
+    try:
+        chat_models = llm_client.list_chat_models(timeout=5)
+    except Exception:  # noqa: BLE001 - return fallbacks instead
+        chat_models = []
+    fallbacks = [config.DEFAULT_MODEL, config.SECOND_MODEL]
+    return list(dict.fromkeys([*chat_models, *fallbacks]))
+
+
 def _public_evidence(evidence_bundle: dict[str, Any]) -> dict[str, Any]:
     retrieval = evidence_bundle.get("retrieval") or {}
-    selected = []
+
+    def public_item(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "text": item.get("text", ""),
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "published_at": item.get("published_at", ""),
+            "score": item.get("score"),
+            "page_index": item.get("page_index"),
+            "sentence_index": item.get("sentence_index"),
+        }
+
     raw_selected = evidence_bundle.get("selected") or evidence_bundle.get(
         "selected_evidence"
     ) or []
-    for item in raw_selected:
-        selected.append(
-            {
-                "text": item.get("text", ""),
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "score": item.get("score"),
-                "page_index": item.get("page_index"),
-                "sentence_index": item.get("sentence_index"),
-            }
-        )
+    raw_candidates = evidence_bundle.get("candidates") or raw_selected
+    selected = [public_item(item) for item in raw_selected]
+    candidates = [
+        public_item(item)
+        for item in raw_candidates[: config.EVIDENCE_CANDIDATES]
+    ]
     return {
         "text": evidence_bundle.get("evidence_text", ""),
         "selected": selected,
+        "candidates": candidates,
         "provider": retrieval.get("provider"),
         "cached": bool(retrieval.get("cached")),
         "pages": len(retrieval.get("results") or []),
@@ -198,7 +219,10 @@ def _public_model_output(output: dict[str, Any]) -> dict[str, Any]:
     return {
         "model": output.get("model", ""),
         "label": output.get("label"),
+        "confidence": output.get("confidence", ""),
+        "answer": output.get("answer", ""),
         "reason": output.get("reason", ""),
+        "citations": output.get("citations", []),
         "latency_seconds": output.get("latency_seconds", 0.0),
         "retried": bool(output.get("retried")),
         "raw_response": output.get("raw_response", ""),
@@ -211,6 +235,7 @@ def _serialize_check(result: dict[str, Any]) -> dict[str, Any]:
         "mode": "check",
         "models": [_public_model_output(result)],
         "evidence": _public_evidence(result),
+        "quality": result.get("checks"),
         "bert": result.get("bert"),
     }
 
@@ -221,6 +246,7 @@ def _serialize_compare(result: dict[str, Any]) -> dict[str, Any]:
         "mode": "compare",
         "models": [_public_model_output(item) for item in result.get("models", [])],
         "evidence": _public_evidence(result.get("evidence_bundle") or {}),
+        "quality": result.get("checks"),
         "bert": result.get("bert"),
     }
 
@@ -272,17 +298,36 @@ def health() -> dict[str, Any]:
 
 @app.get("/models", dependencies=[Depends(_rate_limit)])
 def models() -> dict[str, Any]:
-    try:
-        chat_models = llm_client.list_chat_models(timeout=5)
-    except Exception:  # noqa: BLE001 - return fallbacks instead
-        chat_models = []
-    fallbacks = [config.DEFAULT_MODEL, config.SECOND_MODEL]
-    merged = list(dict.fromkeys([*chat_models, *fallbacks]))
     return {
-        "models": merged,
+        "models": _available_models(),
         "default": config.DEFAULT_MODEL,
         "secondary": config.SECOND_MODEL,
+        "loaded": model_manager.loaded_models(),
+        "cli_available": model_manager.lms_available(),
     }
+
+
+@app.post(
+    "/models/select",
+    dependencies=[Depends(_rate_limit), Depends(_require_access_code)],
+)
+async def select_model(request: ModelSelectRequest) -> dict[str, Any]:
+    if request.model not in _available_models():
+        raise HTTPException(status_code=400, detail="Unknown model.")
+    try:
+        state = await asyncio.wait_for(
+            asyncio.to_thread(model_manager.ensure_only_model, request.model),
+            timeout=config.MODEL_SWITCH_TIMEOUT,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Timed out while switching the local model.",
+        ) from exc
+    except model_manager.ModelManagerError as exc:
+        logger.exception("Model switch failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return state
 
 
 @app.get("/evaluation/summary")
@@ -311,12 +356,21 @@ def evaluation_summary() -> dict[str, Any]:
     dependencies=[Depends(_rate_limit), Depends(_require_access_code)],
 )
 async def check(request: ClaimRequest) -> dict[str, Any]:
+    selected_model = request.model or config.DEFAULT_MODEL
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(model_manager.ensure_only_model, selected_model),
+            timeout=config.MODEL_SWITCH_TIMEOUT,
+        )
+    except Exception:  # noqa: BLE001 - keep checking if the CLI is unavailable
+        logger.exception("Could not enforce single-model loading; continuing")
+
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 pipeline.check_claim,
                 request.claim,
-                model=request.model,
+                model=selected_model,
                 use_bert=request.use_bert,
             ),
             timeout=config.API_REQUEST_TIMEOUT,

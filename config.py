@@ -36,6 +36,16 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
 LM_STUDIO_URL = os.getenv(
     "LM_STUDIO_URL", f"{LM_STUDIO_BASE_URL}/chat/completions"
@@ -105,6 +115,7 @@ API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = _env_int("API_PORT", 8000)
 
 LABELS = ("SUPPORTED", "REFUTED")
+LIVE_LABELS = ("SUPPORTED", "REFUTED", "UNVERIFIED")
 LABEL_MAP = {
     "entailment": "SUPPORTED",
     "not_entailment": "REFUTED",
@@ -117,6 +128,11 @@ EMBEDDING_MODEL = os.getenv(
 )
 
 DEFAULT_TOP_K = 5
+EVIDENCE_CANDIDATES = _env_int("EVIDENCE_CANDIDATES", 20)
+MIN_TOP_RELEVANCE = _env_float("MIN_TOP_RELEVANCE", 0.32)
+MIN_MEAN_RELEVANCE = _env_float("MIN_MEAN_RELEVANCE", 0.20)
+MIN_EVIDENCE_SOURCES = _env_int("MIN_EVIDENCE_SOURCES", 2)
+MODEL_SWITCH_TIMEOUT = _env_int("MODEL_SWITCH_TIMEOUT", 150)
 DEFAULT_LLM_TIMEOUT = 180
 DEFAULT_LLM_TEMPERATURE = 0.0
 

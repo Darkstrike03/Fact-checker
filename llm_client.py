@@ -189,6 +189,33 @@ def chat_text(
 
 
 _LABEL_PATTERN = re.compile(r"\b(SUPPORTED|REFUTED)\b", re.IGNORECASE)
+_LIVE_LABEL_PATTERN = re.compile(
+    r"\b(SUPPORTED|REFUTED|UNVERIFIED)\b", re.IGNORECASE
+)
+
+
+def parse_live_label(text: str) -> str | None:
+    """Parse a three-way live label without weakening dataset evaluation."""
+    if not text:
+        return None
+
+    upper = text.upper()
+    for label in config.LIVE_LABELS:
+        if re.search(rf"(?:LABEL|VERDICT|ANSWER)\s*[:\-]\s*{label}\b", upper):
+            return label
+
+    if re.search(r"\b(?:INSUFFICIENT|NOT ENOUGH)\s+EVIDENCE\b", upper):
+        return "UNVERIFIED"
+
+    compact = re.sub(r"[^A-Z]", "", upper)
+    if compact in config.LIVE_LABELS:
+        return compact
+
+    matches = _LIVE_LABEL_PATTERN.findall(upper)
+    unique = {match.upper() for match in matches}
+    if len(unique) == 1:
+        return unique.pop()
+    return None
 
 
 def parse_dataset_label(text: str) -> str | None:
@@ -215,6 +242,75 @@ def parse_dataset_label(text: str) -> str | None:
     if len(unique) == 1:
         return unique.pop()
     return None
+
+
+def _parse_live_fields(text: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    current = ""
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(
+            r"^(LABEL|CONFIDENCE|ANSWER|REASON|WHY|CITATIONS?)\s*[:\-]\s*(.*)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            current = match.group(1).upper()
+            if current == "WHY":
+                current = "REASON"
+            if current.startswith("CITATION"):
+                current = "CITATIONS"
+            fields[current] = match.group(2).strip()
+        elif current in {"ANSWER", "REASON", "CITATIONS"}:
+            fields[current] = f"{fields[current]} {line}".strip()
+    return fields
+
+
+def parse_confidence(text: str) -> str:
+    upper = (text or "").upper().strip()
+    if upper in {"HIGH", "MEDIUM", "MODERATE", "LOW"}:
+        return "MEDIUM" if upper == "MODERATE" else upper
+    match = re.search(
+        r"(?:CONFIDENCE|CERTAINTY)\s*[:\-]\s*(HIGH|MEDIUM|MODERATE|LOW)",
+        upper,
+    )
+    if match:
+        value = match.group(1)
+        return "MEDIUM" if value == "MODERATE" else value
+    return "MEDIUM"
+
+
+def extract_citations(text: str) -> list[int]:
+    citations: set[int] = set()
+    for group in re.findall(r"\[([0-9,;\s]+)\]", text or ""):
+        for part in re.split(r"[,;\s]+", group):
+            if part.isdigit():
+                number = int(part)
+                if 1 <= number <= 99:
+                    citations.add(number)
+    return sorted(citations)
+
+
+def parse_live_response(text: str) -> dict[str, Any]:
+    fields = _parse_live_fields(text)
+    label = parse_live_label(fields.get("LABEL", "") or text)
+    confidence = parse_confidence(fields.get("CONFIDENCE", "") or text)
+    answer = fields.get("ANSWER", "").strip()
+    reason = fields.get("REASON", "").strip()
+    if not answer:
+        answer = fields.get("WHY", "").strip() or reason or (text or "").strip()
+    if not reason:
+        reason = answer
+    citations = extract_citations(f"{answer} {reason} {fields.get('CITATIONS', '')}")
+    return {
+        "label": label,
+        "confidence": confidence,
+        "answer": answer[:800],
+        "reason": reason[:800],
+        "citations": citations,
+    }
 
 
 def normalize_label(value: str) -> str | None:

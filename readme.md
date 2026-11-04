@@ -1,14 +1,14 @@
-# Factly — COVID-Fact Evidence Checker
+# Factly - Evidence-First Claim Checker
 
 **4th Year Project | Dept. of Computer Science & Engineering | RCCIIT**
 
 Faculty Supervisor: Dr. Anup Kumar Kolya
 
-Factly is a retrieval-grounded fact-checking system for COVID-19 claims. The system uses local Playwright-based web retrieval, SBERT + FAISS evidence ranking, and two small quantized models served by LM Studio. Verdicts use the COVID-Fact dataset labels **SUPPORTED** and **REFUTED** only.
+Factly is a retrieval-grounded fact-checking system for social-media claims. The system uses local Playwright-based web retrieval, SBERT + FAISS evidence ranking, and a small quantized model served by LM Studio. Live verdicts use **SUPPORTED**, **REFUTED**, or **UNVERIFIED**, always with an answer-first explanation and citations. COVID-Fact remains the labelled reference benchmark for evaluating the retrieval and classification pipeline.
 
 ## Stage demo: one command
 
-Prerequisites: the `.venv` is installed and both models are already downloaded in LM Studio.
+Prerequisites: the `.venv` is installed and at least one supported model is already downloaded in LM Studio.
 
 ```powershell
 python demo.py
@@ -17,9 +17,9 @@ python demo.py
 The launcher automatically:
 
 1. starts the LM Studio server if needed;
-2. preloads both models;
+2. selects and preloads one model at a time;
 3. starts the API and serves the Factly UI at `http://127.0.0.1:8000/ui/`;
-4. warms up retrieval and both models with one sample claim;
+4. warms up retrieval and the selected model with one sample claim;
 5. opens the browser.
 
 Keep the terminal open during the demo. Press **Ctrl+C** to stop the API and the LM Studio server together.
@@ -39,16 +39,17 @@ The shared access code is a demo gate, not user authentication. See the [securit
 ## What it does
 
 - Searches the web with Playwright (Brave Search primary, Google News RSS and Wikipedia fallbacks).
-- Fetches and extracts page text with `trafilatura`.
+- Fetches and extracts page text with `trafilatura`, including publication dates when available.
 - Ranks evidence sentences with `all-MiniLM-L6-v2` and FAISS cosine similarity.
-- Sends the same evidence to two LM Studio models and asks for a strict binary label.
-- Shows the label, short reason, selected evidence with URLs, optional BERT hint, and run metadata.
-- Returns **No verdict** when no usable evidence is found instead of inventing a label.
+- Sends the top five passages to one selected LM Studio model and asks for an answer-first verdict: **SUPPORTED**, **REFUTED**, or **UNVERIFIED**.
+- Applies deterministic date, entity, source-count, and citation checks; unsupported model verdicts are downgraded to **UNVERIFIED**.
+- Shows the answer, confidence, reason, citations, the five passages used, a wider set of retrieved candidates, and run metadata.
+- Switches between supported models without ever loading both at once.
 - Provides a reproducible evaluation harness for the official COVID-Fact splits.
 
 ## Results
 
-Full test split, gold evidence, 401 examples per configuration:
+The following numbers are from the labelled COVID-Fact reference benchmark, not a social-media benchmark. Full test split, gold evidence, 401 examples per configuration:
 
 | Model | Prompt | Accuracy | Macro F1 | Invalid |
 |---|---|---:|---:|---:|
@@ -68,14 +69,16 @@ FACT_CHECKER/
 ├── demo.py                        # One-command local stage demo
 ├── api.py                         # FastAPI backend and local UI host
 ├── app.py                         # Local Gradio UI
-├── pipeline.py                    # Live orchestration
+├── pipeline.py                    # Live orchestration + evidence selection
+├── verification.py                # Date, entity, source, and citation guards
+├── model_manager.py               # One-model-at-a-time LM Studio control
 ├── retrieval.py                   # Playwright search + page fetch
 ├── evidence.py                    # Sentence splitting + SBERT/FAISS ranking
-├── llm_client.py                  # LM Studio client + strict label parser
+├── llm_client.py                  # LM Studio client + live/dataset parsers
 ├── config.py                      # Paths, models, environment settings
 ├── basic_rag.py                   # Stage 1 CLI demo
-├── advanced_rag.py                # Two-model comparison CLI
-├── fact_checker_final.py          # CLI demo with optional BERT screen
+├── advanced_rag.py                # Research CLI for model comparison
+├── fact_checker_final.py          # Legacy CLI demo
 ├── docs/
 │   ├── index.html                 # Factly static frontend
 │   ├── app.js                     # Frontend logic
@@ -88,9 +91,8 @@ FACT_CHECKER/
 │   ├── build_retrieval_cache.py   # Playwright cache builder
 │   ├── prompts.py                 # Zero-shot / few-shot / UI prompts
 │   └── metrics.py                 # Metrics + bootstrap + McNemar
-├── tests/                         # Unit tests
-├── resources/                     # COVID-Fact paper + official TSV splits
-└── fact_checker_bert/             # Optional local BERT weights
+├── tests/                         # Existing parser/metric/evidence tests
+└── resources/                     # COVID-Fact paper + official TSV splits
 ```
 
 ## Quick start
@@ -112,8 +114,8 @@ Playwright uses the installed Microsoft Edge browser by default. If Edge is unav
 ### 2. LM Studio
 
 1. Install LM Studio.
-2. Download `liquid/lfm2.5-1.2b` and `qwen3-0.6b`.
-3. The one-command demo starts the local server and loads both models automatically.
+2. Download `liquid/lfm2.5-1.2b` and optionally `qwen3-0.6b`.
+3. The one-command demo starts the local server and loads only the selected model.
 
 Both model ids are configurable in `.env`:
 
@@ -125,7 +127,7 @@ REASONING_EFFORT=none
 
 `REASONING_EFFORT=none` is important for Qwen3; otherwise it can spend the whole completion budget on hidden reasoning tokens and return an empty answer.
 
-### 3. Run the local Gradio UI
+### 3. Run the optional Gradio UI
 
 ```powershell
 .\.venv\Scripts\python.exe app.py
@@ -139,7 +141,7 @@ Open `http://127.0.0.1:7860`. For phone access on the same Wi-Fi, use the LAN ad
 python demo.py
 ```
 
-The script starts LM Studio, preloads both models, pre-warms the pipeline, serves the UI at `http://127.0.0.1:8000/ui/`, and opens the browser. Press **Ctrl+C** to stop everything it started.
+The script starts LM Studio, preloads one model, pre-warms the pipeline, serves the UI at `http://127.0.0.1:8000/ui/`, and opens the browser. Press **Ctrl+C** to stop everything it started. Select the other model from the UI to switch; Factly unloads the previous model first.
 
 For the optional separate API/frontend and hosted-tunnel workflow, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
@@ -227,7 +229,8 @@ The tests cover strict label parsing, dataset integrity, metric calculations, an
 - Live search results are time-sensitive and depend on search-engine behavior.
 - Small quantized models are highly prompt-sensitive; LFM benefits from few-shot examples while Qwen is hurt by the same examples.
 - No human evaluation of reason/citation faithfulness was performed.
-- The optional BERT screen is a hint only; its local weights do not expose explicit `id2label` metadata.
+- No labelled social-media benchmark exists yet, so live social-media performance is qualitative; COVID-Fact is the reference stress test.
+- Date and entity guards are deliberately conservative and can downgrade a true claim when sources omit a matching date or use synonyms.
 - The public demo depends on the laptop staying online with LM Studio and the API running.
 - Cloudflare Quick Tunnel URLs change on restart; users may need to update the backend URL in the site settings.
 - The shared access code is a demo gate, not user authentication.
@@ -245,4 +248,4 @@ The paper PDF and official TSV splits are included in `resources/`. See `resourc
 
 ## Hosted demo status
 
-The FastAPI service, Gemini-inspired static frontend, local startup scripts, and deployment guide are implemented. The remaining deployment step is enabling GitHub Pages for the `/docs` folder and starting the Cloudflare Quick Tunnel. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+GitHub Pages is configured for the `/docs` folder. Push the latest revision to redeploy the static frontend, then start the Cloudflare Quick Tunnel and enter its URL in the site's connection settings. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

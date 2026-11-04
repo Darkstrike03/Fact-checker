@@ -13,12 +13,12 @@ python demo.py
 The launcher:
 
 1. finds `lms.exe` and starts the LM Studio server if needed;
-2. preloads `liquid/lfm2.5-1.2b` and `qwen3-0.6b`;
+2. selects and preloads one model (`liquid/lfm2.5-1.2b` by default);
 3. starts FastAPI and serves the UI at `http://127.0.0.1:8000/ui/`;
-4. runs one warm-up `/compare` request;
+4. runs one warm-up `/check` request;
 5. opens the browser.
 
-Press **Ctrl+C** to stop the API and the LM Studio server together. The command needs no tunnel, GitHub Pages, or access code.
+Press **Ctrl+C** to stop the API and the LM Studio server together. The command needs no tunnel, GitHub Pages, or access code. Choosing another model from the UI calls `/models/select`, which unloads the current model before loading the new one.
 
 `demo.py` sets `LOCAL_DEMO=true` for its API process. Loopback requests skip the access-code prompt; requests arriving through a tunnel still require the configured code.
 

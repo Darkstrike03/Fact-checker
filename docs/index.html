@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Factly is an evidence-first COVID-19 fact checker powered by live retrieval and two local language models.">
+  <meta name="description" content="Factly is an evidence-first social-media claim checker powered by live retrieval and a local language model.">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https: http://127.0.0.1:8000 http://localhost:8000; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>Factly — Evidence-first fact checking</title>
@@ -40,7 +40,7 @@
         </button>
         <button class="nav-item" type="button" data-view-link="evaluation">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M8 16v-5M12 16V7M16 16v-8M20 16V4"/></svg>
-          Evaluation
+          Reference benchmark
         </button>
         <button class="nav-item" type="button" data-view-link="how">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg>
@@ -77,6 +77,10 @@
         </button>
         <div class="topbar-title">Factly</div>
         <div class="topbar-right">
+          <button class="icon-button evidence-button" id="evidenceButton" type="button" aria-label="Open evidence panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8 12h8M8 16h8"/></svg>
+            <span class="evidence-count" id="evidenceCount">0</span>
+          </button>
           <span class="connection-badge unknown" id="connectionBadge">
             <span class="status-dot" id="connectionDot"></span>
             <span id="connectionText">Connecting</span>
@@ -94,60 +98,69 @@
             Evidence-first fact checking
           </div>
           <h1>Check the claim.<br><span class="gradient-text">See the evidence.</span></h1>
-          <p class="hero-copy">Factly searches the live web, ranks the strongest evidence, and asks two local models for a verdict. Only <strong>SUPPORTED</strong> or <strong>REFUTED</strong> make the cut.</p>
+          <p class="hero-copy">Factly searches the live web, ranks the strongest passages, and gives one careful answer. A claim can be <strong>SUPPORTED</strong>, <strong>REFUTED</strong>, or <strong>UNVERIFIED</strong>.</p>
         </div>
 
-        <div class="transcript" id="transcript" aria-live="polite" aria-label="Fact-check conversation"></div>
+        <div class="check-layout">
+          <div class="check-main">
+            <div class="transcript" id="transcript" aria-live="polite" aria-label="Fact-check conversation"></div>
 
-        <form class="composer" id="claimForm">
-          <div class="composer-input-row">
-            <textarea id="claimInput" rows="1" maxlength="600" placeholder="Ask Factly to check a COVID-19 claim…" aria-label="COVID-19 claim to check"></textarea>
-            <button class="send-button" id="submitButton" type="submit" aria-label="Check this claim">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
-            </button>
-          </div>
-          <div class="composer-options">
-            <label class="switch">
-              <input id="compareToggle" type="checkbox" checked>
-              <span class="switch-track" aria-hidden="true"></span>
-              <span>Compare models</span>
-            </label>
-            <div class="model-pickers" id="modelPickers">
-              <label class="model-picker">
-                <span>Primary</span>
-                <select id="primaryModel" aria-label="Primary model"></select>
-              </label>
-              <label class="model-picker">
-                <span>Compare</span>
-                <select id="secondaryModel" aria-label="Comparison model"></select>
-              </label>
+            <form class="composer" id="claimForm">
+              <div class="composer-input-row">
+                <textarea id="claimInput" rows="1" maxlength="600" placeholder="Paste a claim circulating on social media…" aria-label="Claim to check"></textarea>
+                <button class="send-button" id="submitButton" type="submit" aria-label="Check this claim">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+                </button>
+              </div>
+              <div class="composer-options">
+                <label class="model-picker">
+                  <span>Model</span>
+                  <select id="modelSelect" aria-label="Local model"></select>
+                </label>
+                <span class="model-status" id="modelStatus">One model at a time</span>
+              </div>
+              <div class="composer-foot">
+                <span id="charCount">0 / 600</span>
+                <span>Live retrieval often takes 20–60 seconds</span>
+              </div>
+            </form>
+
+            <div class="suggestions" id="suggestions" aria-label="Example claims">
+              <button type="button" data-claim="Narendra Modi visited Goa on 19 January 2023">Modi visited Goa in 2023</button>
+              <button type="button" data-claim="The Indian government banned TikTok in June 2020">TikTok ban in India</button>
+              <button type="button" data-claim="Apple released the iPhone 15 in September 2023">iPhone 15 release</button>
+              <button type="button" data-claim="NASA confirmed Earth will experience 15 days of darkness in November 2025">NASA darkness claim</button>
             </div>
-            <label class="checkbox">
-              <input id="bertToggle" type="checkbox">
-              <span>BERT hint</span>
-            </label>
-          </div>
-          <div class="composer-foot">
-            <span id="charCount">0 / 600</span>
-            <span>Live retrieval often takes 20–40 seconds</span>
-          </div>
-        </form>
 
-        <div class="suggestions" id="suggestions" aria-label="Example claims">
-          <button type="button" data-claim="COVID-19 vaccines reduce hospitalisation">COVID-19 vaccines reduce hospitalisation</button>
-          <button type="button" data-claim="Ivermectin is an effective treatment for COVID-19">Ivermectin treats COVID-19</button>
-          <button type="button" data-claim="Face masks help prevent the spread of COVID-19">Masks prevent transmission</button>
-          <button type="button" data-claim="COVID-19 vaccines cause infertility">Vaccines cause infertility</button>
+            <p class="disclaimer">Factly is a research demo. It can be wrong. Open the evidence before sharing a verdict.</p>
+          </div>
+
+          <aside class="evidence-panel" id="evidencePanel" aria-label="Evidence panel">
+            <div class="evidence-panel-head">
+              <div>
+                <span class="eyebrow">Sources</span>
+                <h2>Evidence</h2>
+              </div>
+              <button class="icon-button panel-close" id="closeEvidence" type="button" aria-label="Close evidence panel">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </div>
+            <p class="evidence-panel-copy">The five strongest passages are used for the verdict. Expand the list to inspect more of the retrieved candidates.</p>
+            <div class="evidence-content" id="evidenceContent">
+              <div class="evidence-empty">
+                <p>Run a check to see the passages behind the answer.</p>
+              </div>
+            </div>
+          </aside>
         </div>
-
-        <p class="disclaimer">Factly is a research demo. It can be wrong. Open the cited sources before sharing a verdict.</p>
+        <div class="evidence-scrim" id="evidenceScrim"></div>
       </section>
 
       <section class="view" id="view-evaluation">
         <div class="page-head">
-          <span class="eyebrow">Measured, not guessed</span>
-          <h2>Evaluation</h2>
-          <p>Gold-evidence results on the full 401-claim test split, plus the 60-claim retrieval sample. Macro F1 is the headline metric because the test set is imbalanced.</p>
+          <span class="eyebrow">Reference benchmark</span>
+          <h2>COVID-Fact benchmark</h2>
+          <p>COVID-Fact remains the reference benchmark: gold-evidence results on the full 401-claim test split, plus the 60-claim retrieval sample. It is not a social-media benchmark, so treat these numbers as a stress test of the pipeline rather than a performance claim for general claims.</p>
         </div>
         <div id="evaluationStatus" class="callout">Loading evaluation summary…</div>
         <div id="evaluationTables" class="evaluation-tables"></div>
@@ -178,12 +191,12 @@
           <article class="step-card">
             <span class="step-number">03</span>
             <h3>Rank</h3>
-            <p>SBERT embeds the claim and candidate sentences; FAISS cosine similarity selects the five strongest sentences.</p>
+            <p>SBERT embeds the claim and candidate sentences; FAISS cosine similarity selects the five strongest. The top 20 remain available in the evidence panel.</p>
           </article>
           <article class="step-card">
             <span class="step-number">04</span>
-            <h3>Decide</h3>
-            <p>Two local models receive the same evidence and must answer with a strict dataset label.</p>
+            <h3>Answer</h3>
+            <p>One local model returns SUPPORTED, REFUTED, or UNVERIFIED, with a direct answer and citations. Deterministic checks can downgrade unsupported verdicts.</p>
           </article>
         </div>
         <div class="architecture-card">
@@ -192,17 +205,17 @@
         <div class="two-col">
           <article class="info-card">
             <h3>Label policy</h3>
-            <p><strong>SUPPORTED</strong> maps to COVID-Fact <code>entailment</code>. <strong>REFUTED</strong> maps to <code>not_entailment</code>. If retrieval finds no usable evidence, Factly says <strong>No verdict</strong> instead of guessing.</p>
+            <p>The live UI uses <strong>SUPPORTED</strong>, <strong>REFUTED</strong>, and <strong>UNVERIFIED</strong>. COVID-Fact evaluation stays binary: <code>entailment</code> maps to SUPPORTED and <code>not_entailment</code> to REFUTED.</p>
           </article>
           <article class="info-card">
-            <h3>Privacy boundary</h3>
-            <p>The browser talks only to the FastAPI backend over HTTPS. LM Studio stays on localhost and is never exposed through the tunnel.</p>
+            <h3>Memory boundary</h3>
+            <p>Only one local model is kept loaded at a time. Switching models unloads the previous one before loading the next, which keeps the demo usable on machines with 8 GB RAM.</p>
           </article>
         </div>
       </section>
 
       <footer class="site-footer">
-        <span>Factly · COVID-19 evidence checker</span>
+        <span>Factly · social-media claim checker</span>
         <span>Built with Playwright, SBERT, FAISS, LM Studio, and FastAPI.</span>
       </footer>
     </main>

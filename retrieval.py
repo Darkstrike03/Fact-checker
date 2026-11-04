@@ -10,6 +10,7 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
 from typing import Any
@@ -40,9 +41,10 @@ SKIP_EXTENSIONS = (
 )
 BLOCKED_HOSTS = ("bing.com", "duckduckgo.com", "microsoft.com", "go.microsoft.com")
 
-_browser = None
-_playwright = None
+_thread_state = threading.local()
 _browser_lock = threading.RLock()
+_browsers: set[Any] = set()
+_playwrights: set[Any] = set()
 
 
 class RetrievalError(RuntimeError):
@@ -87,43 +89,62 @@ def _save_cache(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _start_playwright():
-    global _playwright, _browser
-    with _browser_lock:
-        if _browser is not None and _browser.is_connected():
-            return _browser
+    browser = getattr(_thread_state, "browser", None)
+    if browser is not None and browser.is_connected():
+        return browser
 
-        from playwright.sync_api import sync_playwright
+    if browser is not None:
+        try:
+            browser.close()
+        except Exception:
+            pass
+        with _browser_lock:
+            _browsers.discard(browser)
+        _thread_state.browser = None
 
-        if _playwright is None:
-            _playwright = sync_playwright().start()
+    from playwright.sync_api import sync_playwright
 
-        channels = [config.PLAYWRIGHT_CHANNEL, "msedge", "chrome", None]
-        seen: set[str | None] = set()
-        errors: list[str] = []
-        for channel in channels:
-            if channel in seen:
-                continue
-            seen.add(channel)
-            try:
-                launch_options: dict[str, Any] = {
-                    "headless": True,
-                    "args": [
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-dev-shm-usage",
-                    ],
-                }
-                if channel:
-                    launch_options["channel"] = channel
-                _browser = _playwright.chromium.launch(**launch_options)
-                return _browser
-            except Exception as exc:  # noqa: BLE001 - try the next channel
-                errors.append(f"{channel or 'bundled chromium'}: {exc}")
+    playwright = getattr(_thread_state, "playwright", None)
+    if playwright is None:
+        playwright = sync_playwright().start()
+        _thread_state.playwright = playwright
 
-        raise RetrievalError(
-            "Could not launch a Playwright browser. Install one with "
-            "`playwright install chromium` or install Microsoft Edge. "
-            + " | ".join(errors[:2])
-        )
+    channels = [config.PLAYWRIGHT_CHANNEL, "msedge", "chrome", None]
+    seen: set[str | None] = set()
+    errors: list[str] = []
+    for channel in channels:
+        if channel in seen:
+            continue
+        seen.add(channel)
+        try:
+            launch_options: dict[str, Any] = {
+                "headless": True,
+                "args": [
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                ],
+            }
+            if channel:
+                launch_options["channel"] = channel
+            browser = playwright.chromium.launch(**launch_options)
+            _thread_state.browser = browser
+            with _browser_lock:
+                _browsers.add(browser)
+                _playwrights.add(playwright)
+            return browser
+        except Exception as exc:  # noqa: BLE001 - try the next channel
+            errors.append(f"{channel or 'bundled chromium'}: {exc}")
+
+    try:
+        playwright.stop()
+    except Exception:
+        pass
+    _thread_state.playwright = None
+    raise RetrievalError(
+        "Could not launch a Playwright browser. Install one with "
+        "`playwright install chromium` or install Microsoft Edge. "
+        + " | ".join(errors[:2])
+    )
 
 
 def _new_context(browser):
@@ -150,7 +171,25 @@ def _new_context(browser):
     return context
 
 
-def _clean_result(url: str, title: str, snippet: str) -> dict[str, str] | None:
+def _normalize_published(value: str) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    iso_match = re.match(r"(\d{4}-\d{2}-\d{2})", text)
+    if iso_match:
+        return iso_match.group(1)
+    try:
+        return parsedate_to_datetime(text).date().isoformat()
+    except Exception:
+        return ""
+
+
+def _clean_result(
+    url: str,
+    title: str,
+    snippet: str,
+    published_at: str = "",
+) -> dict[str, str] | None:
     url = url.strip()
     if not url.startswith(("http://", "https://")):
         return None
@@ -165,7 +204,11 @@ def _clean_result(url: str, title: str, snippet: str) -> dict[str, str] | None:
     snippet = re.sub(r"\s+", " ", unescape(snippet or "")).strip()
     if not title:
         title = parsed.netloc
-    return {"title": title, "url": url, "snippet": snippet}
+    result = {"title": title, "url": url, "snippet": snippet}
+    published = _normalize_published(published_at)
+    if published:
+        result["published_at"] = published
+    return result
 
 
 def _search_brave(page, query: str, max_results: int) -> list[dict[str, str]]:
@@ -245,7 +288,8 @@ def _search_google_news(query: str, max_results: int) -> list[dict[str, str]]:
             " ",
             item.findtext("description") or "",
         )
-        cleaned = _clean_result(link, title, description)
+        published = item.findtext("pubDate") or ""
+        cleaned = _clean_result(link, title, description, published)
         if cleaned:
             results.append(cleaned)
         if len(results) >= max_results:
@@ -376,6 +420,47 @@ def _extract_text_from_html(html: str, url: str) -> str:
         return ""
 
 
+_PUBLISHED_PATTERNS = (
+    re.compile(
+        r'<meta[^>]+(?:property|itemprop|name)=["\']'
+        r'(?:article:published_time|datePublished|datepublished|pubdate|publish-date|date)'
+        r'["\'][^>]*content=["\']([^"\']+)',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*'
+        r'(?:property|itemprop|name)=["\']'
+        r'(?:article:published_time|datePublished|datepublished|pubdate|publish-date|date)'
+        r'["\']',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'<time[^>]+datetime=["\']([^"\']+)',
+        re.IGNORECASE,
+    ),
+)
+
+
+def _extract_published_at(html: str) -> str:
+    try:
+        import trafilatura
+
+        metadata = trafilatura.extract_metadata(html)
+        if metadata and metadata.date:
+            normalized = _normalize_published(metadata.date)
+            if normalized:
+                return normalized
+    except Exception:
+        pass
+    for pattern in _PUBLISHED_PATTERNS:
+        match = pattern.search(html or "")
+        if match:
+            normalized = _normalize_published(match.group(1))
+            if normalized:
+                return normalized
+    return ""
+
+
 def fetch_page_text(
     url: str,
     use_cache: bool = True,
@@ -401,6 +486,7 @@ def fetch_page_text(
         "url": url,
         "text": "",
         "sentences": [],
+        "published_at": "",
         "error": None,
         "cached": False,
     }
@@ -417,6 +503,7 @@ def fetch_page_text(
 
         payload["text"] = text
         payload["sentences"] = split_sentences(text)
+        payload["published_at"] = _extract_published_at(html)
     except Exception as exc:  # noqa: BLE001 - one bad page must not stop the run
         payload["error"] = str(exc)
     finally:
@@ -474,6 +561,7 @@ def search_and_fetch(
                     "url": result.get("url", ""),
                     "snippet": result.get("snippet", ""),
                     "sentences": [],
+                    "published_at": result.get("published_at", ""),
                     "error": None,
                 }
             )
@@ -489,6 +577,9 @@ def search_and_fetch(
                 "url": result.get("url", ""),
                 "snippet": result.get("snippet", ""),
                 "sentences": page.get("sentences", []),
+                "published_at": (
+                    page.get("published_at") or result.get("published_at", "")
+                ),
                 "error": page.get("error"),
             }
         )
@@ -499,21 +590,26 @@ def search_and_fetch(
 
 
 def close_browser() -> None:
-    """Close the shared browser and Playwright driver."""
-    global _browser, _playwright
+    """Close browser instances created by this process."""
     with _browser_lock:
+        browsers = list(_browsers)
+        playwrights = list(_playwrights)
+        _browsers.clear()
+        _playwrights.clear()
+
+    for browser in browsers:
         try:
-            if _browser is not None:
-                _browser.close()
+            browser.close()
         except Exception:
             pass
+    for playwright in playwrights:
         try:
-            if _playwright is not None:
-                _playwright.stop()
+            playwright.stop()
         except Exception:
             pass
-        _browser = None
-        _playwright = None
+
+    _thread_state.browser = None
+    _thread_state.playwright = None
 
 
 atexit.register(close_browser)

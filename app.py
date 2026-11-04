@@ -1,15 +1,15 @@
-"""Gradio interface for the COVID-Fact evidence checker."""
+"""Gradio interface for the Factly evidence-first claim checker."""
 
 from __future__ import annotations
 
 import html
 import socket
-from pathlib import Path
 
 import gradio as gr
 
 import config
 import llm_client
+import model_manager
 import pipeline
 
 
@@ -30,37 +30,52 @@ def available_models() -> list[str]:
     return models
 
 
-def _status_html(label: str | None, reason: str) -> str:
+def _status_html(result: dict | None, error: str = "") -> str:
+    if not result or error:
+        reason = html.escape(error or "No result was returned.")
+        return (
+            '<div style="padding:16px 18px;border-radius:12px;'
+            'background:#fef3f2;color:#a61b1b;border:1px solid #fecdca;">'
+            '<div style="font-size:15px;font-weight:600;">Check failed</div>'
+            f'<div style="margin-top:8px;font-size:14px;color:#444;">{reason}</div>'
+            "</div>"
+        )
+
+    label = str(result.get("label") or "UNVERIFIED").upper()
     if label == "SUPPORTED":
         background, color = "#e7f6ea", "#116329"
-        heading = "SUPPORTED"
     elif label == "REFUTED":
         background, color = "#fde8e7", "#a61b1b"
-        heading = "REFUTED"
     else:
         background, color = "#f2f2f2", "#444444"
-        heading = "No verdict"
 
-    reason_text = html.escape(reason or "No reason was returned.")
-    return (
-        f'<div style="padding:14px 18px;border-radius:10px;'
-        f'background:{background};color:{color};border:1px solid {color}33;">'
-        f'<div style="font-size:24px;font-weight:700;letter-spacing:0.04em;">'
-        f"{heading}</div>"
-        f'<div style="margin-top:8px;font-size:14px;color:#333;">{reason_text}</div>'
-        f"</div>"
+    answer = html.escape(
+        result.get("answer") or result.get("reason") or "No answer was returned."
     )
-
-
-def _bert_markdown(bert: dict | None) -> str:
-    if not bert:
-        return "BERT pre-screen disabled."
-    if "error" in bert:
-        return f"BERT pre-screen unavailable: `{html.escape(str(bert['error']))}`"
+    reason = html.escape(result.get("reason") or "")
+    confidence = html.escape(str(result.get("confidence") or "LOW").upper())
+    citations = result.get("citations") or []
+    citation_text = " ".join(f"[{int(number)}]" for number in citations)
+    citation_html = (
+        f'<div style="margin-top:10px;font-size:12px;color:#666;">'
+        f"Citations used: {html.escape(citation_text)}</div>"
+        if citations
+        else ""
+    )
     return (
-        f"**BERT pre-screen:** {bert['label']} "
-        f"({bert['confidence']:.1%} confidence). "
-        "This is a hint only; the LLM verdict uses retrieved evidence."
+        f'<div style="padding:16px 18px;border-radius:12px;'
+        f'background:{background};color:{color};border:1px solid {color}33;">'
+        f'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+        f'<span style="font-size:13px;font-weight:700;letter-spacing:0.08em;">'
+        f"{label}</span>"
+        f'<span style="font-size:12px;padding:2px 8px;border-radius:999px;'
+        f'background:{color}18;">{confidence} confidence</span>'
+        f"</div>"
+        f'<div style="margin-top:10px;font-size:20px;line-height:1.35;'
+        f'font-weight:600;color:#1f1f1f;">{answer}</div>'
+        f'<div style="margin-top:8px;font-size:13px;color:#555;">{reason}</div>'
+        f"{citation_html}"
+        f"</div>"
     )
 
 
@@ -70,7 +85,8 @@ def _sources_markdown(result: dict) -> str:
     provider = retrieval.get("provider") or "none"
     lines = [
         f"**Evidence provider:** {provider} | "
-        f"**Pages fetched:** {len(retrieval.get('results', []))}"
+        f"**Pages fetched:** {len(retrieval.get('results', []))} | "
+        f"**Selected passages:** {len(selected)}"
     ]
     if not selected:
         error = retrieval.get("error")
@@ -86,12 +102,18 @@ def _sources_markdown(result: dict) -> str:
         title = html.escape(sentence.get("title") or "Untitled source")
         url = sentence.get("url") or ""
         text = html.escape((sentence.get("text") or "")[:700])
+        published = sentence.get("published_at")
         score = sentence.get("score")
-        score_text = f" (similarity {score:.3f})" if score is not None else ""
+        meta = []
+        if published:
+            meta.append(str(published)[:10])
+        if score is not None:
+            meta.append(f"similarity {score:.3f}")
+        meta_text = f" ({', '.join(meta)})" if meta else ""
         if url:
-            lines.append(f"{number}. [{title}]({url}){score_text}")
+            lines.append(f"{number}. [{title}]({url}){meta_text}")
         else:
-            lines.append(f"{number}. **{title}**{score_text}")
+            lines.append(f"{number}. **{title}**{meta_text}")
         lines.append(f"   > {text}")
         lines.append("")
     return "\n".join(lines)
@@ -99,13 +121,16 @@ def _sources_markdown(result: dict) -> str:
 
 def _meta_markdown(result: dict) -> str:
     retrieval = result.get("retrieval") or {}
+    checks = result.get("checks") or {}
     lines = [
         f"- Model: `{html.escape(str(result.get('model', '')))}`",
+        f"- Confidence: `{html.escape(str(result.get('confidence', '')))}`",
         f"- Evidence mode: live Playwright retrieval",
         f"- Search provider: `{retrieval.get('provider') or 'none'}`",
         f"- Cached retrieval: `{bool(retrieval.get('cached'))}`",
-        f"- Retried for a strict label: `{bool(result.get('retried'))}`",
+        f"- Retried for a strict answer: `{bool(result.get('retried'))}`",
         f"- Latency: `{result.get('latency_seconds', 0.0):.2f}s`",
+        f"- Retrieval quality: `{checks.get('relevance_label', 'unknown')}`",
     ]
     return "\n".join(lines)
 
@@ -117,46 +142,32 @@ def _raw_markdown(result: dict) -> str:
     return "```text\n" + raw[:5000] + "\n```"
 
 
-def check_claim_ui(
-    claim: str,
-    primary_model: str,
-    secondary_model: str,
-    use_bert: bool,
-) -> tuple[str, str, str, str, str, str, str]:
+def check_claim_ui(claim: str, model: str) -> tuple[str, str, str, str]:
     claim = (claim or "").strip()
     if not claim:
-        empty = _status_html(None, "Please enter a claim.")
-        return empty, empty, "No evidence retrieved.", "BERT pre-screen disabled.", "", "", ""
+        return (
+            _status_html(None, "Please enter a claim."),
+            "No evidence retrieved.",
+            "",
+            "",
+        )
 
     try:
-        comparison = pipeline.compare_models(
-            claim,
-            models=[primary_model, secondary_model],
-            use_bert=use_bert,
-        )
+        model_manager.ensure_only_model(model)
+        result = pipeline.check_claim(claim, model=model, use_bert=False)
     except Exception as exc:  # noqa: BLE001 - shown in the UI
-        error = _status_html(None, f"Pipeline error: {exc}")
-        return error, error, "", "", "", "", str(exc)
+        return (
+            _status_html(None, f"Pipeline error: {exc}"),
+            "",
+            "",
+            str(exc),
+        )
 
-    primary, secondary = comparison["models"]
-    evidence_markdown = _sources_markdown(
-        {
-            "selected_evidence": comparison["evidence_bundle"]["selected"],
-            "retrieval": comparison["evidence_bundle"]["retrieval"],
-        }
-    )
-    primary_status = _status_html(primary.get("label"), primary.get("reason", ""))
-    secondary_status = _status_html(
-        secondary.get("label"), secondary.get("reason", "")
-    )
     return (
-        primary_status,
-        secondary_status,
-        evidence_markdown,
-        _bert_markdown(comparison.get("bert")),
-        _meta_markdown(primary),
-        _raw_markdown(primary),
-        _raw_markdown(secondary),
+        _status_html(result),
+        _sources_markdown(result),
+        _meta_markdown(result),
+        _raw_markdown(result),
     )
 
 
@@ -192,79 +203,66 @@ else:
         "Start the server and load a model before checking claims."
     )
 
-with gr.Blocks(title="COVID-Fact Evidence Checker") as app:
+with gr.Blocks(title="Factly - Social-media Claim Checker") as app:
     gr.Markdown(
-        "# COVID-Fact Evidence Checker\n"
-        "Retrieval-grounded fact checking with two small local models. "
-        "The primary labels follow the COVID-Fact dataset: **SUPPORTED** or **REFUTED**.\n\n"
+        "# Factly\n"
+        "Evidence-first fact checking for social-media claims. "
+        "Factly searches the live web, ranks the strongest passages, and returns "
+        "**SUPPORTED**, **REFUTED**, or **UNVERIFIED** with citations.\n\n"
         f"{health_text}"
     )
 
     with gr.Tabs():
-        with gr.Tab("Live fact check"):
+        with gr.Tab("Check a claim"):
             with gr.Row():
                 with gr.Column(scale=2):
                     claim_input = gr.Textbox(
                         label="Claim",
                         placeholder=(
-                            "e.g. COVID-19 vaccines reduce hospitalisation."
+                            "e.g. The Indian government banned TikTok in June 2020."
                         ),
                         lines=3,
                     )
-                    with gr.Row():
-                        primary_model = gr.Dropdown(
-                            choices=chat_models,
-                            value=config.DEFAULT_MODEL,
-                            label="Primary model",
-                        )
-                        secondary_model = gr.Dropdown(
-                            choices=chat_models,
-                            value=config.SECOND_MODEL,
-                            label="Comparison model",
-                        )
-                    use_bert = gr.Checkbox(
-                        label="Run optional BERT pre-screen (not used for the final label)",
-                        value=False,
+                    model = gr.Dropdown(
+                        choices=chat_models,
+                        value=config.DEFAULT_MODEL,
+                        label="Model (one loaded at a time)",
                     )
                     submit = gr.Button("Check claim", variant="primary")
                     gr.Examples(
                         examples=[
-                            ["COVID-19 vaccines reduce hospitalisation."],
-                            ["Ivermectin is a proven cure for COVID-19."],
-                            ["SARS-CoV-2 can spread through aerosols."],
-                            ["The COVID-19 vaccine changes your DNA."],
+                            ["Narendra Modi visited Goa on 19 January 2023"],
+                            ["The Indian government banned TikTok in June 2020"],
+                            ["Apple released the iPhone 15 in September 2023"],
+                            [
+                                "NASA confirmed Earth will experience 15 days of "
+                                "darkness in November 2025"
+                            ],
                         ],
                         inputs=claim_input,
                     )
 
                 with gr.Column(scale=3):
-                    gr.Markdown("### Primary model")
-                    primary_output = gr.HTML()
-                    gr.Markdown("### Comparison model")
-                    secondary_output = gr.HTML()
+                    gr.Markdown("### Answer")
+                    answer_output = gr.HTML()
 
             with gr.Row():
                 evidence_output = gr.Markdown(label="Evidence used")
                 with gr.Column():
-                    bert_output = gr.Markdown(label="BERT pre-screen")
                     meta_output = gr.Markdown(label="Run details")
 
-            with gr.Accordion("Raw model outputs", open=False):
-                primary_raw = gr.Markdown()
-                secondary_raw = gr.Markdown()
+            with gr.Accordion("Model draft before safety checks", open=False):
+                raw_output = gr.Markdown()
 
             submit.click(
                 fn=check_claim_ui,
-                inputs=[claim_input, primary_model, secondary_model, use_bert],
-                outputs=[
-                    primary_output,
-                    secondary_output,
-                    evidence_output,
-                    bert_output,
-                    meta_output,
-                    primary_raw,
-                    secondary_raw,
-                ],
+                inputs=[claim_input, model],
+                outputs=[answer_output, evidence_output, meta_output, raw_output],
+            )
+            claim_input.submit(
+                fn=check_claim_ui,
+                inputs=[claim_input, model],
+                outputs=[answer_output, evidence_output, meta_output, raw_output],
             )
 
         with gr.Tab("Pipeline"):
@@ -283,29 +281,30 @@ with gr.Blocks(title="COVID-Fact Evidence Checker") as app:
             gr.Markdown(
                 "The live path uses Playwright to search the web and fetch pages, "
                 "splits pages into sentences, ranks them against the claim with "
-                "SBERT + FAISS, and asks each LM Studio model for a strict "
-                "SUPPORTED/REFUTED label using only the selected evidence."
+                "SBERT + FAISS, and asks the selected LM Studio model for an "
+                "evidence-grounded answer. Deterministic date, entity, and source "
+                "checks can downgrade a verdict to UNVERIFIED."
             )
 
-        with gr.Tab("COVID-Fact evaluation"):
+        with gr.Tab("COVID-Fact reference benchmark"):
             gr.Markdown(_evaluation_markdown())
 
         with gr.Tab("Labels and method"):
             gr.Markdown(
-                "## Dataset-aligned labels\n"
-                "The official COVID-Fact RTE data uses `entailment` and "
-                "`not_entailment`. This project maps them to **SUPPORTED** and "
-                "**REFUTED** only.\n\n"
-                "The live UI does not invent `True`, `False`, `Misleading`, or "
-                "`Unverifiable` verdicts. If retrieval finds no usable evidence, "
-                "the UI says **No verdict** instead of guessing.\n\n"
+                "## Live labels\n"
+                "The live UI uses **SUPPORTED**, **REFUTED**, and **UNVERIFIED**. "
+                "UNVERIFIED means the evidence was missing, weak, or did not confirm "
+                "the claim's key details.\n\n"
+                "The COVID-Fact benchmark stays binary: `entailment` maps to "
+                "SUPPORTED and `not_entailment` maps to REFUTED.\n\n"
                 "## Evidence policy\n"
-                "The model sees only the selected retrieved sentences. The optional "
-                "BERT screen is shown as a hint, not as the final verdict.\n\n"
+                "The model sees only the selected retrieved passages. The evidence "
+                "panel exposes the five passages used for the verdict and the wider "
+                "set of retrieved candidates.\n\n"
                 "## Reproducibility\n"
                 "Evaluation scripts use the official train/dev/test TSV files and "
-                "the same strict label parser. The test split is never used for "
-                "prompt tuning."
+                "a strict binary parser. The test split is never used for prompt "
+                "tuning."
             )
 
 if __name__ == "__main__":
