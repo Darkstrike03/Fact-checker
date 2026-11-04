@@ -2,23 +2,20 @@
 
 ## 1. Hosted frontend with laptop backend
 
-This is the next deliverable after the current project scope. The intended user experience is simple:
+Status: **implemented locally; GitHub Pages and public-tunnel verification remain**.
 
-1. Open the hosted website.
-2. Start LM Studio on the laptop and load a model.
-3. The website talks to a small backend running on the laptop.
-4. The backend calls the existing `pipeline` and returns the result.
+The Factly static frontend lives in `docs/`, the FastAPI wrapper is `api.py`, and the runbook is `docs/DEPLOYMENT.md`.
 
-### Recommended deployment shape
+### Deployment shape
 
 ```text
 Browser (HTTPS)
       |
       v
-Static frontend (GitHub Pages / Netlify / Vercel)
+GitHub Pages static frontend (docs/)
       |
-      v  HTTPS API request
-Cloudflare Tunnel or ngrok
+      v  HTTPS API request + X-Access-Code
+Cloudflare Quick Tunnel
       |
       v
 FastAPI backend on the laptop (127.0.0.1:8000)
@@ -28,49 +25,26 @@ FastAPI backend on the laptop (127.0.0.1:8000)
       +--> LM Studio at 127.0.0.1:1234
 ```
 
-The browser must call an **HTTPS API endpoint**, not `http://localhost:1234` directly. A page served over HTTPS cannot reliably call a plain HTTP localhost endpoint, and LM Studio's API should not be exposed to the internet directly.
+The browser calls the tunnel endpoint, never LM Studio directly. The API binds to localhost, uses a shared access code, per-IP rate limiting, a maximum claim length, request timeouts, and a CORS allowlist.
 
-### Backend API sketch
+### Implemented
 
-```text
-GET  /health                 -> backend + LM Studio status
-GET  /models                 -> available chat models
-POST /check                  -> {claim, model, use_bert}
-POST /compare                -> {claim, primary_model, secondary_model}
-GET  /evaluation/summary     -> cached results markdown/json
-```
+- [x] `api.py` with `/health`, `/models`, `/evaluation/summary`, `/check`, and `/compare`.
+- [x] CORS, access-code authentication, rate limiting, and request size limits.
+- [x] Static `docs/` frontend with a Gemini-inspired original design.
+- [x] Backend URL and access code configurable in the site settings.
+- [x] Evaluation summary page and architecture page.
+- [x] “Backend offline” and loading states.
+- [x] Local startup scripts and deployment guide.
+- [x] Local mocked and real-API browser tests.
 
-Implementation notes:
+### Remaining deployment checks
 
-- Keep `pipeline.py` as the single orchestration layer; the API should be a thin wrapper.
-- Add an API token or simple auth header so the tunnel is not an open relay.
-- Add per-IP rate limiting and a maximum claim length.
-- Add request timeouts and return structured errors.
-- Allow only the deployed frontend origin in CORS.
-- Do not expose the LM Studio port or the Playwright browser debugging port.
-- Add a health endpoint that reports whether LM Studio is reachable and which model is loaded.
-- Keep the backend awake; laptop sleep or Wi-Fi changes will break the tunnel.
-- Cloudflare Tunnel is preferred over ngrok for a stable hostname and no browser warning page.
-
-### Frontend scope
-
-- Claim input and model selector.
-- Two-column comparison view for the two models.
-- Label badges: `SUPPORTED` / `REFUTED`, plus a clear “No verdict” state when evidence is insufficient.
-- Evidence cards with source title, URL, and selected sentences.
-- Raw-output disclosure for debugging.
-- Architecture/pipeline page and evaluation summary page.
-- Loading states with a warning that live retrieval can take 20–40 seconds.
-
-### Deployment checklist
-
-- [ ] Add `api.py` with FastAPI endpoints around `pipeline`.
-- [ ] Add CORS, auth, rate limiting, and request size limits.
-- [ ] Add a static `frontend/` or separate frontend repository.
-- [ ] Configure the backend URL through a frontend environment variable.
-- [ ] Start LM Studio and load a model before opening the site.
-- [ ] Run the tunnel and verify HTTPS from a phone on mobile data.
-- [ ] Add a “backend offline” state to the frontend.
+- [ ] Enable GitHub Pages from `main` / `/docs`.
+- [ ] Start the Cloudflare Quick Tunnel.
+- [ ] Verify the hosted site from a phone on mobile data.
+- [ ] Replace the local demo access code with a deployment code.
+- [ ] Confirm LM Studio and the API stay awake for the demo window.
 
 ## 2. Evaluation improvements
 

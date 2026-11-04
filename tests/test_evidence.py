@@ -34,6 +34,9 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn("[1]", text)
         self.assertNotIn("[2]", text)
 
+    def test_clean_text_unescapes_html_entities(self):
+        self.assertEqual(evidence.clean_text("A&nbsp;B &amp; C"), "A B & C")
+
     def test_small_candidate_set_does_not_need_embeddings(self):
         candidates = [
             {"text": "First evidence sentence.", "title": "A", "url": "u1"},

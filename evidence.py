@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+from html import unescape
 from typing import Any, Iterable
 
 import config
@@ -16,7 +17,7 @@ _embedder_lock = threading.Lock()
 
 
 def clean_text(text: str) -> str:
-    return _WHITESPACE.sub(" ", str(text or "")).strip()
+    return _WHITESPACE.sub(" ", unescape(str(text or ""))).strip()
 
 
 def split_sentences(text: str, min_chars: int = 20, max_sentences: int = 120) -> list[str]:

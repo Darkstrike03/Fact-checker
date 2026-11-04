@@ -1,10 +1,20 @@
-# COVID-Fact Evidence Checker
+# Factly — COVID-Fact Evidence Checker
 
 **4th Year Project | Dept. of Computer Science & Engineering | RCCIIT**
 
 Faculty Supervisor: Dr. Anup Kumar Kolya
 
-A retrieval-grounded fact-checking system for COVID-19 claims. The system uses local Playwright-based web retrieval, SBERT + FAISS evidence ranking, and two small quantized models served by LM Studio. Verdicts use the COVID-Fact dataset labels **SUPPORTED** and **REFUTED** only.
+Factly is a retrieval-grounded fact-checking system for COVID-19 claims. The system uses local Playwright-based web retrieval, SBERT + FAISS evidence ranking, and two small quantized models served by LM Studio. Verdicts use the COVID-Fact dataset labels **SUPPORTED** and **REFUTED** only.
+
+## Hosted website
+
+- Frontend: `https://darkstrike03.github.io/Fact-checker/`
+- Local frontend: `http://127.0.0.1:5500/` after running `scripts\start_frontend.ps1`
+- Local API: `http://127.0.0.1:8000` after running `scripts\start_backend.ps1`
+- The hosted page connects to a laptop backend through a Cloudflare Quick Tunnel. Enter the current tunnel URL and shared access code in the site's **Connection settings**.
+- Deployment, security, and troubleshooting steps: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+
+The Gemini-inspired interface is an original Factly design; it is not affiliated with or endorsed by Google.
 
 ## What it does
 
@@ -35,7 +45,8 @@ For comparison, the COVID-Fact paper reports 83.5% accuracy / 82.0 F1 for RoBERT
 
 ```text
 FACT_CHECKER/
-├── app.py                         # Gradio UI
+├── api.py                         # FastAPI backend for the hosted site
+├── app.py                         # Local Gradio UI
 ├── pipeline.py                    # Live orchestration
 ├── retrieval.py                   # Playwright search + page fetch
 ├── evidence.py                    # Sentence splitting + SBERT/FAISS ranking
@@ -44,13 +55,19 @@ FACT_CHECKER/
 ├── basic_rag.py                   # Stage 1 CLI demo
 ├── advanced_rag.py                # Two-model comparison CLI
 ├── fact_checker_final.py          # CLI demo with optional BERT screen
+├── docs/
+│   ├── index.html                 # Factly static frontend
+│   ├── app.js                     # Frontend logic
+│   ├── styles.css                 # Gemini-inspired design
+│   ├── DEPLOYMENT.md              # Pages + tunnel runbook
+│   └── diagrams/                  # Architecture diagrams
+├── scripts/                       # Backend, frontend, tunnel launchers
 ├── evaluation/
 │   ├── evaluate_covidfact.py      # COVID-Fact runner
 │   ├── build_retrieval_cache.py   # Playwright cache builder
 │   ├── prompts.py                 # Zero-shot / few-shot / UI prompts
 │   └── metrics.py                 # Metrics + bootstrap + McNemar
 ├── tests/                         # Unit tests
-├── docs/                          # Report, architecture, diagrams, future work
 ├── resources/                     # COVID-Fact paper + official TSV splits
 └── fact_checker_bert/             # Optional local BERT weights
 ```
@@ -88,7 +105,7 @@ REASONING_EFFORT=none
 
 `REASONING_EFFORT=none` is important for Qwen3; otherwise it can spend the whole completion budget on hidden reasoning tokens and return an empty answer.
 
-### 3. Run the UI
+### 3. Run the local Gradio UI
 
 ```powershell
 .\.venv\Scripts\python.exe app.py
@@ -96,7 +113,25 @@ REASONING_EFFORT=none
 
 Open `http://127.0.0.1:7860`. For phone access on the same Wi-Fi, use the LAN address printed in the console. Public sharing is disabled by default; set `GRADIO_SHARE=True` only when needed.
 
-### 4. Run the CLI demos
+### 4. Run the Factly website locally
+
+Add to `.env`:
+
+```text
+ACCESS_CODE=your-shared-demo-code
+API_ALLOWED_ORIGINS=https://darkstrike03.github.io,http://127.0.0.1:5500
+```
+
+Start the API and the static site in separate terminals:
+
+```powershell
+.\scripts\start_backend.ps1
+.\scripts\start_frontend.ps1
+```
+
+Open `http://127.0.0.1:5500/`, choose **Connection settings**, and enter the backend URL and access code. The hosted GitHub Pages site uses the same frontend and connects through a Cloudflare Quick Tunnel.
+
+### 5. Run the CLI demos
 
 ```powershell
 .\.venv\Scripts\python.exe basic_rag.py
@@ -104,7 +139,7 @@ Open `http://127.0.0.1:7860`. For phone access on the same Wi-Fi, use the LAN ad
 .\.venv\Scripts\python.exe fact_checker_final.py
 ```
 
-### 5. Test retrieval directly
+### 6. Test retrieval directly
 
 ```powershell
 .\.venv\Scripts\python.exe -m retrieval "COVID-19 vaccines reduce hospitalisation" --max-pages 2 --no-cache
@@ -170,7 +205,8 @@ The tests cover strict label parsing, dataset integrity, metric calculations, an
 - [Evaluation methodology and results](docs/EVALUATION.md)
 - [Retrieval design](docs/RETRIEVAL.md)
 - [Full project report draft](docs/REPORT.md)
-- [Future work and hosted frontend plan](docs/FUTURE_WORK.md)
+- [Deployment guide](docs/DEPLOYMENT.md)
+- [Future work](docs/FUTURE_WORK.md)
 - Diagrams: [live pipeline](docs/diagrams/live_pipeline.png), [evaluation pipeline](docs/diagrams/evaluation_pipeline.png), [system architecture](docs/diagrams/system_architecture.png)
 
 ## Limitations
@@ -180,6 +216,9 @@ The tests cover strict label parsing, dataset integrity, metric calculations, an
 - Small quantized models are highly prompt-sensitive; LFM benefits from few-shot examples while Qwen is hurt by the same examples.
 - No human evaluation of reason/citation faithfulness was performed.
 - The optional BERT screen is a hint only; its local weights do not expose explicit `id2label` metadata.
+- The public demo depends on the laptop staying online with LM Studio and the API running.
+- Cloudflare Quick Tunnel URLs change on restart; users may need to update the backend URL in the site settings.
+- The shared access code is a demo gate, not user authentication.
 
 ## Dataset and citation
 
@@ -192,6 +231,6 @@ ACL-IJCNLP 2021, pages 2116–2129.
 
 The paper PDF and official TSV splits are included in `resources/`. See `resources/README.md` for the label mapping and citation.
 
-## Next deliverable
+## Hosted demo status
 
-The planned next step is a hosted static frontend with the laptop as the backend: a small FastAPI service around `pipeline.py`, exposed through Cloudflare Tunnel or ngrok, with LM Studio running locally. See [docs/FUTURE_WORK.md](docs/FUTURE_WORK.md) for the API sketch, security checklist, and deployment plan.
+The FastAPI service, Gemini-inspired static frontend, local startup scripts, and deployment guide are implemented. The remaining deployment step is enabling GitHub Pages for the `/docs` folder and starting the Cloudflare Quick Tunnel. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

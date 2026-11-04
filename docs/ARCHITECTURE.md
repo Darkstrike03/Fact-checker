@@ -4,10 +4,11 @@
 
 ![System architecture](diagrams/system_architecture.png)
 
-The project has two execution paths that share the same retrieval, evidence-ranking, and LLM code:
+The project has three execution paths that share the same retrieval, evidence-ranking, and LLM code:
 
-1. **Live path** (`app.py` → `pipeline.py`): a user enters a claim, Playwright searches the web, evidence is ranked, and two LM Studio models return dataset-aligned labels.
-2. **Evaluation path** (`evaluation/`): the official COVID-Fact TSV splits are used with gold evidence, retrieved evidence, or a claim-only baseline, and results are written to JSONL and metrics tables.
+1. **Local live path** (`app.py` → `pipeline.py`): a user enters a claim, Playwright searches the web, evidence is ranked, and two LM Studio models return dataset-aligned labels.
+2. **Hosted website path** (`docs/` → `api.py` → `pipeline.py`): the static Factly frontend calls the FastAPI backend through a Cloudflare Quick Tunnel using a shared access code.
+3. **Evaluation path** (`evaluation/`): the official COVID-Fact TSV splits are used with gold evidence, retrieved evidence, or a claim-only baseline, and results are written to JSONL and metrics tables.
 
 `config.py` is the single source of truth for paths, model ids, retrieval settings, and label mappings.
 
@@ -21,6 +22,9 @@ The project has two execution paths that share the same retrieval, evidence-rank
 | `evidence.py` | Sentence splitting, deduplication, SBERT embeddings, FAISS cosine ranking |
 | `pipeline.py` | Live orchestration, optional BERT pre-screen, one-model and two-model checks |
 | `app.py` | Gradio UI for live checks, pipeline diagram, evaluation summary, label policy |
+| `api.py` | FastAPI wrapper for the hosted frontend: auth, CORS, rate limits, serialization |
+| `docs/index.html`, `docs/app.js`, `docs/styles.css` | Factly static frontend and Gemini-inspired original design |
+| `scripts/` | PowerShell launchers for the API, static frontend, and Cloudflare tunnel |
 | `evaluation/prompts.py` | Zero-shot, few-shot, claim-only, and UI prompts |
 | `evaluation/evaluate_covidfact.py` | COVID-Fact runner, gold/retrieved/claim-only modes, incremental JSONL |
 | `evaluation/build_retrieval_cache.py` | Reproducible Playwright retrieval cache builder |

@@ -22,6 +22,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_list(name: str, default: tuple[str, ...]) -> list[str]:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return list(default)
+    return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
+
+
 LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
 LM_STUDIO_URL = os.getenv(
     "LM_STUDIO_URL", f"{LM_STUDIO_BASE_URL}/chat/completions"
@@ -70,6 +77,24 @@ GRADIO_SHARE = os.getenv("GRADIO_SHARE", "False").strip().lower() in {
     "yes",
     "on",
 }
+
+ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
+API_ALLOWED_ORIGINS = _env_list(
+    "API_ALLOWED_ORIGINS",
+    (
+        "https://darkstrike03.github.io",
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ),
+)
+API_RATE_LIMIT = _env_int("API_RATE_LIMIT", 8)
+API_RATE_WINDOW = _env_int("API_RATE_WINDOW", 60)
+API_MAX_CLAIM_CHARS = _env_int("API_MAX_CLAIM_CHARS", 600)
+API_REQUEST_TIMEOUT = _env_int("API_REQUEST_TIMEOUT", 90)
+API_HOST = os.getenv("API_HOST", "127.0.0.1")
+API_PORT = _env_int("API_PORT", 8000)
 
 LABELS = ("SUPPORTED", "REFUTED")
 LABEL_MAP = {

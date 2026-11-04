@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Factly is an evidence-first COVID-19 fact checker powered by live retrieval and two local language models.">
+  <title>Factly — Evidence-first fact checking</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-row">
+        <a class="brand" href="#" data-view-link="check" aria-label="Factly home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img"><path d="M12 2.5l1.9 6.1L20 10.5l-6.1 1.9L12 18.5l-1.9-6.1L4 10.5l6.1-1.9L12 2.5z"/><path class="spark-small" d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/></svg>
+          </span>
+          <span class="brand-name">Factly</span>
+        </a>
+      </div>
+
+      <button class="new-check" id="newCheckButton" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        New check
+      </button>
+
+      <nav class="nav" aria-label="Main navigation">
+        <button class="nav-item active" type="button" data-view-link="check">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4v8z"/></svg>
+          Check a claim
+        </button>
+        <button class="nav-item" type="button" data-view-link="evaluation">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M8 16v-5M12 16V7M16 16v-8M20 16V4"/></svg>
+          Evaluation
+        </button>
+        <button class="nav-item" type="button" data-view-link="how">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg>
+          How it works
+        </button>
+        <a class="nav-item" href="https://github.com/Darkstrike03/Fact-checker/blob/main/readme.md" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></svg>
+          Project docs
+        </a>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button class="connection-button" id="settingsButton" type="button">
+          <span class="status-dot unknown" id="sidebarDot"></span>
+          <span>
+            <strong>Connection</strong>
+            <small id="sidebarStatus">Not configured</small>
+          </span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+        <div class="sidebar-meta">
+          <span>RCCIIT · 2026</span>
+          <span>Research demo</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menuButton" type="button" aria-label="Open navigation">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div class="topbar-title">Factly</div>
+        <div class="topbar-right">
+          <span class="connection-badge unknown" id="connectionBadge">
+            <span class="status-dot" id="connectionDot"></span>
+            <span id="connectionText">Connecting</span>
+          </span>
+          <button class="icon-button" id="settingsButtonTop" type="button" aria-label="Connection settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.6v.2h-4V21a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 00.3-1.9A1.7 1.7 0 003 14H2.8v-4H3a1.7 1.7 0 001.6-1 1.7 1.7 0 00-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 001.9.3A1.7 1.7 0 0010 3V2.8h4V3a1.7 1.7 0 001 1.6 1.7 1.7 0 001.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 00-.3 1.9 1.7 1.7 0 001.6 1h.2v4H21a1.7 1.7 0 00-1.6 1z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="view active" id="view-check">
+        <div class="hero" id="hero">
+          <div class="eyebrow">
+            <span class="eyebrow-spark" aria-hidden="true"></span>
+            Evidence-first fact checking
+          </div>
+          <h1>Check the claim.<br><span class="gradient-text">See the evidence.</span></h1>
+          <p class="hero-copy">Factly searches the live web, ranks the strongest evidence, and asks two local models for a verdict. Only <strong>SUPPORTED</strong> or <strong>REFUTED</strong> make the cut.</p>
+        </div>
+
+        <div class="transcript" id="transcript" aria-live="polite" aria-label="Fact-check conversation"></div>
+
+        <form class="composer" id="claimForm">
+          <div class="composer-input-row">
+            <textarea id="claimInput" rows="1" maxlength="600" placeholder="Ask Factly to check a COVID-19 claim…" aria-label="COVID-19 claim to check"></textarea>
+            <button class="send-button" id="submitButton" type="submit" aria-label="Check this claim">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+          <div class="composer-options">
+            <label class="switch">
+              <input id="compareToggle" type="checkbox" checked>
+              <span class="switch-track" aria-hidden="true"></span>
+              <span>Compare models</span>
+            </label>
+            <div class="model-pickers" id="modelPickers">
+              <label class="model-picker">
+                <span>Primary</span>
+                <select id="primaryModel" aria-label="Primary model"></select>
+              </label>
+              <label class="model-picker">
+                <span>Compare</span>
+                <select id="secondaryModel" aria-label="Comparison model"></select>
+              </label>
+            </div>
+            <label class="checkbox">
+              <input id="bertToggle" type="checkbox">
+              <span>BERT hint</span>
+            </label>
+          </div>
+          <div class="composer-foot">
+            <span id="charCount">0 / 600</span>
+            <span>Live retrieval often takes 20–40 seconds</span>
+          </div>
+        </form>
+
+        <div class="suggestions" id="suggestions" aria-label="Example claims">
+          <button type="button" data-claim="COVID-19 vaccines reduce hospitalisation">COVID-19 vaccines reduce hospitalisation</button>
+          <button type="button" data-claim="Ivermectin is an effective treatment for COVID-19">Ivermectin treats COVID-19</button>
+          <button type="button" data-claim="Face masks help prevent the spread of COVID-19">Masks prevent transmission</button>
+          <button type="button" data-claim="COVID-19 vaccines cause infertility">Vaccines cause infertility</button>
+        </div>
+
+        <p class="disclaimer">Factly is a research demo. It can be wrong. Open the cited sources before sharing a verdict.</p>
+      </section>
+
+      <section class="view" id="view-evaluation">
+        <div class="page-head">
+          <span class="eyebrow">Measured, not guessed</span>
+          <h2>Evaluation</h2>
+          <p>Gold-evidence results on the full 401-claim test split, plus the 60-claim retrieval sample. Macro F1 is the headline metric because the test set is imbalanced.</p>
+        </div>
+        <div id="evaluationStatus" class="callout">Loading evaluation summary…</div>
+        <div id="evaluationTables" class="evaluation-tables"></div>
+        <div class="callout subtle">
+          The retrieval sample is mostly snippet-based and is not a full 401-claim page-fetch benchmark. See the
+          <a href="https://github.com/Darkstrike03/Fact-checker/blob/main/docs/EVALUATION.md" target="_blank" rel="noopener noreferrer">evaluation methodology</a>
+          for details.
+        </div>
+      </section>
+
+      <section class="view" id="view-how">
+        <div class="page-head">
+          <span class="eyebrow">Under the hood</span>
+          <h2>How Factly works</h2>
+          <p>Every verdict is grounded in retrieved evidence. LM Studio never talks to the open internet directly.</p>
+        </div>
+        <div class="steps-grid">
+          <article class="step-card">
+            <span class="step-number">01</span>
+            <h3>Search</h3>
+            <p>Playwright searches Brave first, then falls back to Google News RSS and Wikipedia when needed.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">02</span>
+            <h3>Extract</h3>
+            <p>Top pages are fetched and cleaned with trafilatura. Search snippets are used when a page cannot be read.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">03</span>
+            <h3>Rank</h3>
+            <p>SBERT embeds the claim and candidate sentences; FAISS cosine similarity selects the five strongest sentences.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">04</span>
+            <h3>Decide</h3>
+            <p>Two local models receive the same evidence and must answer with a strict dataset label.</p>
+          </article>
+        </div>
+        <div class="architecture-card">
+          <img src="diagrams/system_architecture.png" alt="Factly system architecture: browser, static frontend, FastAPI backend, Playwright, SBERT/FAISS, LM Studio, and evaluation.">
+        </div>
+        <div class="two-col">
+          <article class="info-card">
+            <h3>Label policy</h3>
+            <p><strong>SUPPORTED</strong> maps to COVID-Fact <code>entailment</code>. <strong>REFUTED</strong> maps to <code>not_entailment</code>. If retrieval finds no usable evidence, Factly says <strong>No verdict</strong> instead of guessing.</p>
+          </article>
+          <article class="info-card">
+            <h3>Privacy boundary</h3>
+            <p>The browser talks only to the FastAPI backend over HTTPS. LM Studio stays on localhost and is never exposed through the tunnel.</p>
+          </article>
+        </div>
+      </section>
+
+      <footer class="site-footer">
+        <span>Factly · COVID-19 evidence checker</span>
+        <span>Built with Playwright, SBERT, FAISS, LM Studio, and FastAPI.</span>
+      </footer>
+    </main>
+  </div>
+
+  <dialog class="settings-dialog" id="settingsDialog">
+    <form class="dialog-card" id="settingsForm">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">Connection</span>
+          <h2>Backend settings</h2>
+        </div>
+        <button class="icon-button" id="closeSettings" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <p class="dialog-copy">The hosted page needs the current Cloudflare tunnel URL and the shared access code. Both stay in this browser.</p>
+      <label class="field">
+        <span>Backend URL</span>
+        <input id="backendUrlInput" type="url" placeholder="https://your-tunnel.trycloudflare.com" autocomplete="url">
+      </label>
+      <label class="field">
+        <span>Access code</span>
+        <input id="accessCodeInput" type="password" placeholder="Shared demo code" autocomplete="off">
+      </label>
+      <p class="field-hint" id="accessCodeHint">Use the shared code from the project owner.</p>
+      <div class="dialog-actions">
+        <button class="ghost-button" id="testConnectionButton" type="button">Test connection</button>
+        <button class="primary-button" type="submit">Save and continue</button>
+      </div>
+      <div class="settings-status" id="settingsStatus" role="status"></div>
+    </form>
+  </dialog>
+
+  <noscript>
+    <div class="noscript">Factly needs JavaScript to run the live fact-check interface.</div>
+  </noscript>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

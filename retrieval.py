@@ -10,6 +10,7 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urlparse
@@ -160,8 +161,8 @@ def _clean_result(url: str, title: str, snippet: str) -> dict[str, str] | None:
         return None
     if parsed.path.lower().endswith(SKIP_EXTENSIONS):
         return None
-    title = re.sub(r"\s+", " ", title or "").strip()
-    snippet = re.sub(r"\s+", " ", snippet or "").strip()
+    title = re.sub(r"\s+", " ", unescape(title or "")).strip()
+    snippet = re.sub(r"\s+", " ", unescape(snippet or "")).strip()
     if not title:
         title = parsed.netloc
     return {"title": title, "url": url, "snippet": snippet}
