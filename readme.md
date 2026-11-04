@@ -6,15 +6,35 @@ Faculty Supervisor: Dr. Anup Kumar Kolya
 
 Factly is a retrieval-grounded fact-checking system for COVID-19 claims. The system uses local Playwright-based web retrieval, SBERT + FAISS evidence ranking, and two small quantized models served by LM Studio. Verdicts use the COVID-Fact dataset labels **SUPPORTED** and **REFUTED** only.
 
-## Hosted website
+## Stage demo: one command
+
+Prerequisites: the `.venv` is installed and both models are already downloaded in LM Studio.
+
+```powershell
+python demo.py
+```
+
+The launcher automatically:
+
+1. starts the LM Studio server if needed;
+2. preloads both models;
+3. starts the API and serves the Factly UI at `http://127.0.0.1:8000/ui/`;
+4. warms up retrieval and both models with one sample claim;
+5. opens the browser.
+
+Keep the terminal open during the demo. Press **Ctrl+C** to stop the API and the LM Studio server together.
+
+This path is local-only: no GitHub Pages, no tunnel, and no access-code typing.
+
+## Optional hosted website
 
 - Frontend: `https://darkstrike03.github.io/Fact-checker/`
-- Local frontend: `http://127.0.0.1:5500/` after running `scripts\start_frontend.ps1`
-- Local API: `http://127.0.0.1:8000` after running `scripts\start_backend.ps1`
 - The hosted page connects to a laptop backend through a Cloudflare Quick Tunnel. Enter the current tunnel URL and shared access code in the site's **Connection settings**.
 - Deployment, security, and troubleshooting steps: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 The Gemini-inspired interface is an original Factly design; it is not affiliated with or endorsed by Google.
+
+The shared access code is a demo gate, not user authentication. See the [security model](docs/DEPLOYMENT.md#security-model) before sharing the tunnel URL.
 
 ## What it does
 
@@ -45,7 +65,8 @@ For comparison, the COVID-Fact paper reports 83.5% accuracy / 82.0 F1 for RoBERT
 
 ```text
 FACT_CHECKER/
-├── api.py                         # FastAPI backend for the hosted site
+├── demo.py                        # One-command local stage demo
+├── api.py                         # FastAPI backend and local UI host
 ├── app.py                         # Local Gradio UI
 ├── pipeline.py                    # Live orchestration
 ├── retrieval.py                   # Playwright search + page fetch
@@ -91,9 +112,8 @@ Playwright uses the installed Microsoft Edge browser by default. If Edge is unav
 ### 2. LM Studio
 
 1. Install LM Studio.
-2. Download/load `liquid/lfm2.5-1.2b` and `qwen3-0.6b`.
-3. Start the local server on `http://localhost:1234`.
-4. Keep LM Studio running while using the app.
+2. Download `liquid/lfm2.5-1.2b` and `qwen3-0.6b`.
+3. The one-command demo starts the local server and loads both models automatically.
 
 Both model ids are configurable in `.env`:
 
@@ -113,23 +133,15 @@ REASONING_EFFORT=none
 
 Open `http://127.0.0.1:7860`. For phone access on the same Wi-Fi, use the LAN address printed in the console. Public sharing is disabled by default; set `GRADIO_SHARE=True` only when needed.
 
-### 4. Run the Factly website locally
-
-Add to `.env`:
-
-```text
-ACCESS_CODE=your-shared-demo-code
-API_ALLOWED_ORIGINS=https://darkstrike03.github.io,http://127.0.0.1:5500
-```
-
-Start the API and the static site in separate terminals:
+### 4. Run the one-command stage demo
 
 ```powershell
-.\scripts\start_backend.ps1
-.\scripts\start_frontend.ps1
+python demo.py
 ```
 
-Open `http://127.0.0.1:5500/`, choose **Connection settings**, and enter the backend URL and access code. The hosted GitHub Pages site uses the same frontend and connects through a Cloudflare Quick Tunnel.
+The script starts LM Studio, preloads both models, pre-warms the pipeline, serves the UI at `http://127.0.0.1:8000/ui/`, and opens the browser. Press **Ctrl+C** to stop everything it started.
+
+For the optional separate API/frontend and hosted-tunnel workflow, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### 5. Run the CLI demos
 

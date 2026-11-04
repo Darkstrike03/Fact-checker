@@ -29,6 +29,13 @@ def _env_list(name: str, default: tuple[str, ...]) -> list[str]:
     return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
 LM_STUDIO_URL = os.getenv(
     "LM_STUDIO_URL", f"{LM_STUDIO_BASE_URL}/chat/completions"
@@ -79,6 +86,7 @@ GRADIO_SHARE = os.getenv("GRADIO_SHARE", "False").strip().lower() in {
 }
 
 ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
+LOCAL_DEMO = _env_bool("LOCAL_DEMO", False)
 API_ALLOWED_ORIGINS = _env_list(
     "API_ALLOWED_ORIGINS",
     (

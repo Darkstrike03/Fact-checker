@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import threading
 import time
 from collections import defaultdict, deque
@@ -13,6 +14,8 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 import config
@@ -21,6 +24,10 @@ import pipeline
 
 APP_NAME = "Factly API"
 APP_VERSION = "1.0.0"
+MAX_REQUEST_BYTES = 16_384
+MIN_ACCESS_CODE_LENGTH = 16
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
 app.add_middleware(
@@ -30,6 +37,25 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Access-Code"],
     max_age=600,
 )
+
+
+@app.middleware("http")
+async def reject_oversized_bodies(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH"}:
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                too_large = int(content_length) > MAX_REQUEST_BYTES
+            except ValueError:
+                return JSONResponse(
+                    status_code=400, content={"detail": "Invalid Content-Length."}
+                )
+            if too_large:
+                return JSONResponse(
+                    status_code=413, content={"detail": "Request body too large."}
+                )
+    return await call_next(request)
+
 
 _RATE_LOCK = threading.Lock()
 _RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
@@ -44,14 +70,32 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _is_loopback(request: Request) -> bool:
+    if request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for"):
+        return False
+    host = request.client.host if request.client else ""
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
 def _require_access_code(
+    request: Request,
     x_access_code: str | None = Header(default=None, alias="X-Access-Code"),
 ) -> None:
+    if config.LOCAL_DEMO and _is_loopback(request):
+        return
     expected = config.ACCESS_CODE
     if not expected:
         raise HTTPException(
             status_code=503,
             detail="API access code is not configured. Set ACCESS_CODE in .env.",
+        )
+    if len(expected) < MIN_ACCESS_CODE_LENGTH:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "API access code is too short. "
+                f"Use at least {MIN_ACCESS_CODE_LENGTH} characters."
+            ),
         )
     if not x_access_code or not hmac.compare_digest(x_access_code, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing access code.")
@@ -198,7 +242,7 @@ def index() -> dict[str, Any]:
     }
 
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(_rate_limit)])
 def health() -> dict[str, Any]:
     started = time.perf_counter()
     lm_studio: dict[str, Any]
@@ -210,22 +254,23 @@ def health() -> dict[str, Any]:
             "chat_models": chat_models,
             "model_count": len(models),
         }
-    except Exception as exc:  # noqa: BLE001 - health must not raise
+    except Exception:  # noqa: BLE001 - health must not raise
+        logger.exception("LM Studio health check failed")
         lm_studio = {
             "reachable": False,
             "chat_models": [],
-            "error": str(exc),
         }
     return {
         "status": "ok",
         "version": APP_VERSION,
+        "local_demo": config.LOCAL_DEMO,
         "access_code_configured": bool(config.ACCESS_CODE),
         "lm_studio": lm_studio,
         "elapsed_seconds": round(time.perf_counter() - started, 2),
     }
 
 
-@app.get("/models")
+@app.get("/models", dependencies=[Depends(_rate_limit)])
 def models() -> dict[str, Any]:
     try:
         chat_models = llm_client.list_chat_models(timeout=5)
@@ -263,7 +308,7 @@ def evaluation_summary() -> dict[str, Any]:
 
 @app.post(
     "/check",
-    dependencies=[Depends(_require_access_code), Depends(_rate_limit)],
+    dependencies=[Depends(_rate_limit), Depends(_require_access_code)],
 )
 async def check(request: ClaimRequest) -> dict[str, Any]:
     try:
@@ -281,16 +326,18 @@ async def check(request: ClaimRequest) -> dict[str, Any]:
             status_code=504,
             detail="The fact check timed out. Try a shorter claim or retry.",
         ) from exc
-    except Exception as exc:  # noqa: BLE001 - surfaced as a structured API error
+    except Exception:  # noqa: BLE001 - do not expose internal errors to clients
+        logger.exception("Fact-check pipeline failed")
         raise HTTPException(
-            status_code=502, detail=f"Pipeline error: {exc}"
-        ) from exc
+            status_code=502,
+            detail="The fact-check pipeline failed. Please retry.",
+        ) from None
     return _serialize_check(result)
 
 
 @app.post(
     "/compare",
-    dependencies=[Depends(_require_access_code), Depends(_rate_limit)],
+    dependencies=[Depends(_rate_limit), Depends(_require_access_code)],
 )
 async def compare(request: CompareRequest) -> dict[str, Any]:
     primary = request.primary_model or config.DEFAULT_MODEL
@@ -310,8 +357,13 @@ async def compare(request: CompareRequest) -> dict[str, Any]:
             status_code=504,
             detail="The fact check timed out. Try a shorter claim or retry.",
         ) from exc
-    except Exception as exc:  # noqa: BLE001 - surfaced as a structured API error
+    except Exception:  # noqa: BLE001 - do not expose internal errors to clients
+        logger.exception("Fact-check pipeline failed")
         raise HTTPException(
-            status_code=502, detail=f"Pipeline error: {exc}"
-        ) from exc
+            status_code=502,
+            detail="The fact-check pipeline failed. Please retry.",
+        ) from None
     return _serialize_compare(result)
+
+
+app.mount("/ui", StaticFiles(directory=config.DOCS_DIR, html=True), name="ui")

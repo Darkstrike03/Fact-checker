@@ -6,6 +6,8 @@
     apiBaseUrl: "factly.apiBaseUrl",
     accessCode: "factly.accessCode",
   };
+  const HEALTH_TIMEOUT = 15000;
+  const HEALTH_RETRY_MS = 10000;
   const MODEL_LABELS = {
     "liquid/lfm2.5-1.2b": "LFM2.5 1.2B",
     "qwen3-0.6b": "Qwen3 0.6B",
@@ -28,7 +30,9 @@
     accessCode: readStorage(STORAGE.accessCode) || "",
     models: [],
     busy: false,
+    localDemo: false,
     evaluationLoaded: false,
+    healthRetryTimer: null,
   };
 
   const el = (tag, className, text) => {
@@ -194,6 +198,21 @@
     dom.settingsStatus.textContent = message || "";
   }
 
+  function clearHealthRetry() {
+    if (state.healthRetryTimer) {
+      window.clearTimeout(state.healthRetryTimer);
+      state.healthRetryTimer = null;
+    }
+  }
+
+  function scheduleHealthRetry() {
+    if (state.healthRetryTimer) return;
+    state.healthRetryTimer = window.setTimeout(() => {
+      state.healthRetryTimer = null;
+      if (!state.busy) refreshHealth();
+    }, HEALTH_RETRY_MS);
+  }
+
   async function apiRequest(path, options = {}) {
     const base = state.apiBaseUrl;
     if (!base) {
@@ -246,13 +265,15 @@
   }
 
   async function refreshHealth(showSettingsStatus = false) {
+    clearHealthRetry();
     if (!state.apiBaseUrl) {
       setConnection("unknown", "Not configured");
       if (showSettingsStatus) setSettingsStatus("Enter a backend URL first.", "error");
       return false;
     }
     try {
-      const health = await apiRequest("/health", { timeout: 8000 });
+      const health = await apiRequest("/health", { timeout: HEALTH_TIMEOUT });
+      state.localDemo = Boolean(health.local_demo);
       const lm = health.lm_studio || {};
       if (lm.reachable) {
         const count = Array.isArray(lm.chat_models) ? lm.chat_models.length : 0;
@@ -269,12 +290,14 @@
           "error",
         );
       }
+      scheduleHealthRetry();
       return false;
     } catch (error) {
       setConnection("offline", "Backend offline");
       if (showSettingsStatus) {
         setSettingsStatus(error.message || "Backend is unreachable.", "error");
       }
+      scheduleHealthRetry();
       return false;
     }
   }
@@ -299,7 +322,7 @@
   async function loadModels() {
     let models = [];
     try {
-      const payload = await apiRequest("/models", { timeout: 8000 });
+      const payload = await apiRequest("/models", { timeout: HEALTH_TIMEOUT });
       models = Array.isArray(payload.models) ? payload.models : [];
       const fallback = [payload.default, payload.secondary].filter(Boolean);
       models = Array.from(new Set([...models, ...fallback]));
@@ -392,7 +415,7 @@
     dom.testConnectionButton.disabled = true;
     setSettingsStatus("Testing connection…");
     try {
-      const health = await apiRequest("/health", { timeout: 8000 });
+      const health = await apiRequest("/health", { timeout: HEALTH_TIMEOUT });
       const lm = health.lm_studio || {};
       if (lm.reachable) {
         setSettingsStatus("Backend reached. LM Studio is online.", "success");
@@ -472,7 +495,7 @@
       detail.textContent =
         seconds < 25
           ? `Searching, fetching pages, and ranking evidence… ${seconds}s`
-          : `Still working — live retrieval can take 20–40s… ${seconds}s`;
+          : `Still working — cold retrieval can take 45–60s… ${seconds}s`;
     }, 1000);
     return { message, timer };
   }
@@ -646,7 +669,7 @@
       openSettings("Add the current backend tunnel URL to start checking claims.");
       return;
     }
-    if (!state.accessCode) {
+    if (!state.accessCode && !state.localDemo) {
       openSettings("Enter the shared access code to use the fact-check API.");
       return;
     }

@@ -1,8 +1,30 @@
 # Factly deployment guide
 
-This guide runs the hosted Factly frontend on GitHub Pages and the live fact-checking backend on the laptop.
+This guide covers the local one-command stage demo and the optional hosted frontend.
 
-## Architecture
+## Local stage demo
+
+Run this from the project root:
+
+```powershell
+python demo.py
+```
+
+The launcher:
+
+1. finds `lms.exe` and starts the LM Studio server if needed;
+2. preloads `liquid/lfm2.5-1.2b` and `qwen3-0.6b`;
+3. starts FastAPI and serves the UI at `http://127.0.0.1:8000/ui/`;
+4. runs one warm-up `/compare` request;
+5. opens the browser.
+
+Press **Ctrl+C** to stop the API and the LM Studio server together. The command needs no tunnel, GitHub Pages, or access code.
+
+`demo.py` sets `LOCAL_DEMO=true` for its API process. Loopback requests skip the access-code prompt; requests arriving through a tunnel still require the configured code.
+
+## Optional hosted architecture
+
+This path runs the hosted Factly frontend on GitHub Pages and the live fact-checking backend on the laptop.
 
 ```text
 Browser (HTTPS)
@@ -155,14 +177,40 @@ Then commit and push. Visitors still enter the access code themselves.
 3. Set the tunnel URL and access code.
 4. Run a claim and confirm the two model verdicts and source cards appear.
 
+## Security model
+
+Factly is a **research demo**, not a production authentication system.
+
+- `ACCESS_CODE` is a shared demo gate, not a user account or password. The API requires at least 16 characters, but anyone who has the code can call `/check` and `/compare`.
+- The hosted page stores the backend URL and access code in browser `localStorage`. Use a dedicated demo code and rotate it if it is shared beyond the demo audience.
+- Failed authentication attempts count toward the per-IP rate limit. The limiter is in-memory and single-process, so it is not a defense against distributed abuse.
+- `LOCAL_DEMO=true` skips the access code only for requests whose socket address is loopback and which do not carry forwarding headers. It does not bypass auth for tunneled traffic.
+- `/health`, `/models`, and `/evaluation/summary` are public so the frontend can show status and results. `/check` and `/compare` require the access code.
+- CORS restricts browser calls to the configured origins, but CORS is not authentication. Non-browser clients can call the tunnel directly if they know the URL and code.
+- Cloudflare terminates TLS for the Quick Tunnel and can see request and response bodies. Do not submit sensitive or personal claims. A named tunnel with Cloudflare Access is the upgrade path if real access control is needed.
+- Retrieved web pages are untrusted input to the language models. A malicious page could contain prompt-injection text or misleading evidence; the system can still return a wrong verdict.
+- The API returns generic pipeline errors to clients and logs details locally. LM Studio stays on localhost.
+- The frontend uses a strict Content-Security-Policy, renders untrusted text with `textContent`, and only opens `http`/`https` source links with `noopener noreferrer`.
+- No third-party JavaScript is loaded. Google Fonts is the only external frontend dependency.
+- Quick Tunnel URLs are public and unguessable, but they are not access control and change on restart. The API also binds to localhost and rejects oversized request bodies.
+
+### Residual risks
+
+- Shared-code leakage through screenshots, browser storage, or a compromised machine.
+- Availability: laptop sleep, Wi-Fi changes, LM Studio crashes, or tunnel restarts take the demo offline.
+- Prompt injection or false evidence from live search results.
+- No human review of every generated reason and citation.
+- Rate limiting can be bypassed with many source IPs.
+
 ## Security checklist
 
-- [ ] `ACCESS_CODE` is set and is not a real account password.
+- [ ] `ACCESS_CODE` is at least 16 characters and is not a real account password.
 - [ ] `API_ALLOWED_ORIGINS` contains only the GitHub Pages origin and local test origins.
 - [ ] LM Studio is bound to localhost and never exposed by the tunnel.
 - [ ] The API binds to `127.0.0.1`, not `0.0.0.0`.
 - [ ] Rate limits are enabled (`API_RATE_LIMIT`, `API_RATE_WINDOW`).
 - [ ] `.env` is never committed.
+- [ ] The shared code is not posted in screenshots or public chat.
 - [ ] The laptop is awake, online, and plugged in during the demo.
 - [ ] Cloudflare Quick Tunnel downtime is expected; the site shows a clear offline state.
 
