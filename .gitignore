@@ -1,4 +1,4 @@
-# Model weights — hosted on HuggingFace
+# Model weights - hosted on HuggingFace
 fact_checker_bert/model.safetensors
 
 # Python
@@ -6,6 +6,18 @@ __pycache__/
 *.pyc
 .venv/
 *.env
+.env
+.env.*
+
+# Keep the example env file
+!.env.example
 
 # VS Code
 .vscode/
+
+# Gradio runtime artifacts
+.gradio/
+flagged/
+
+# Logs
+*.log
